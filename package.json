@@ -1,11 +1,11 @@
 {
-  "name": "bubble-diagram-vite-safe",
+  "name": "bubble-diagram-vite-reset",
   "private": true,
   "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "echo '--- repo root ---' && ls -la && echo '--- src ---' && ls -la src && vite build",
+    "build": "vite build",
     "preview": "vite preview"
   },
   "dependencies": {
