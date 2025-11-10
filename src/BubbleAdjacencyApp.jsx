@@ -1171,7 +1171,15 @@ function InlineEditField({ label, value, onChange }) {
 }
 
 // Wrap long labels into tspans
-function wrapText(text, max = 16)
+function wrapText(text, max = 16) {
+  const words = String(text).split(/\s+/); const lines = []; let cur = "";
+  for (const w of words) {
+    if ((cur + " " + w).trim().length > max) { if (cur) lines.push(cur); cur = w; }
+    else { cur = (cur + " " + w).trim(); }
+  }
+  if (cur) lines.push(cur);
+  return lines.slice(0, 5);
+}
 // --- Precise width-based SVG text wrapping (uses canvas measureText) ---------
 const _measureCtx = (() => {
   try {
@@ -1182,7 +1190,7 @@ const _measureCtx = (() => {
 
 function measureWidth(s, fontFamily, fontPx) {
   const ctx = _measureCtx;
-  if (!ctx) return s.length * fontPx * 0.6; // fallback heuristic
+  if (!ctx) return String(s).length * fontPx * 0.6; // heuristic fallback
   ctx.font = `${Math.max(8, fontPx)}px ${fontFamily || "system-ui, Arial"}`;
   return ctx.measureText(String(s)).width;
 }
@@ -1233,15 +1241,7 @@ function wrapToWidth(label, fontFamily, fontPx, maxWidth, maxLines = 5) {
   }
   return lines;
 }
- {
-  const words = String(text).split(/\s+/); const lines = []; let cur = "";
-  for (const w of words) {
-    if ((cur + " " + w).trim().length > max) { if (cur) lines.push(cur); cur = w; }
-    else { cur = (cur + " " + w).trim(); }
-  }
-  if (cur) lines.push(cur);
-  return lines.slice(0, 5);
-}
+
 
 // Smoke tests (console)
 (function runSmokeTests() {
