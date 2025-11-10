@@ -244,6 +244,9 @@ export default function BubbleAdjacencyApp() {
   const svgRef = useRef(null);
   const simRef = useRef(null);
   const containerRef = useRef(null);
+  // File handle for JSON (File System Access API)
+  const jsonHandleRef = useRef(null);
+
 
   // Zoom / Pan
   const zoomBehaviorRef = useRef(null);
@@ -546,8 +549,10 @@ export default function BubbleAdjacencyApp() {
   useEffect(() => {
     const onKey = (e) => {
       if (e.ctrlKey || e.metaKey) {
-        if (e.key.toLowerCase() === "z") { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
-        if (e.key.toLowerCase() === "y") { e.preventDefault(); redo(); return; }
+        const k = e.key.toLowerCase();
+        if (k === "z") { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
+        if (k === "y") { e.preventDefault(); redo(); return; }
+        if (k === "s") { e.preventDefault(); saveJSON(); return; }
       }
       if (e.key === "Delete" || e.key === "Backspace") {
         const id = lastClickedLinkRef.current; if (!id) return;
@@ -616,6 +621,28 @@ export default function BubbleAdjacencyApp() {
     img.src = `data:image/svg+xml;base64,${svg64}`;
   }
 
+  
+  function buildExportPayload() {
+    return {
+      nodes, links, styles,
+      bulk: {
+        bulkFill,
+        bulkFillTransparent,
+        bulkStroke,
+        bulkStrokeWidth,
+        bulkTextFont,
+        bulkTextColor,
+        bulkTextSize: clampTextSize(bulkTextSize),
+      },
+      buffer,
+      arrowOverlap,
+      rotationSensitivity,
+      showMeasurements,
+      exportBgMode, exportBgCustom,
+      liveBgMode, liveBgCustom,
+    };
+  }
+
   function exportJSON() {
     const blob = new Blob(
       [JSON.stringify({
@@ -639,6 +666,124 @@ export default function BubbleAdjacencyApp() {
     );
     const url = URL.createObjectURL(blob); download(url, `bubble-diagram-${Date.now()}.json`);
   }
+  // ---- File System Access API helpers (progressive enhancement) -------------
+  async function saveJSON() {
+    // Save to the same file if we have a handle; otherwise fall back to Save As
+    if (window.showSaveFilePicker && jsonHandleRef.current) {
+      try {
+        const handle = jsonHandleRef.current;
+        const writable = await handle.createWritable();
+        await writable.write(JSON.stringify(buildExportPayload(), null, 2));
+        await writable.close();
+        return;
+      } catch (err) {
+        console.warn("Save JSON failed, falling back to Save As…", err);
+      }
+    }
+    // Fallback
+    return saveJSONAs();
+  }
+
+  async function saveJSONAs() {
+    if (window.showSaveFilePicker) {
+      try {
+        const handle = await window.showSaveFilePicker({
+          suggestedName: "bubble-diagram.json",
+          types: [{
+            description: "JSON files",
+            accept: { "application/json": [".json"] },
+          }],
+        });
+        jsonHandleRef.current = handle;
+        const writable = await handle.createWritable();
+        await writable.write(JSON.stringify(buildExportPayload(), null, 2));
+        await writable.close();
+        return;
+      } catch (err) {
+        console.warn("Save As cancelled or failed; using download() fallback.", err);
+      }
+    }
+    // Fallback: simple download with a prompt for the filename
+    let name = typeof window !== "undefined" ? (window.prompt("File name", "bubble-diagram.json") || "bubble-diagram.json") : "bubble-diagram.json";
+    const blob = new Blob([JSON.stringify(buildExportPayload(), null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    download(url, name);
+  }
+
+  async function openJSON() {
+    if (window.showOpenFilePicker) {
+      try {
+        const [handle] = await window.showOpenFilePicker({
+          multiple: false,
+          types: [{
+            description: "JSON files",
+            accept: { "application/json": [".json"] },
+          }],
+        });
+        if (!handle) return;
+        const file = await handle.getFile();
+        const text = await file.text();
+        jsonHandleRef.current = handle; // remember for "Save" back to same file
+        parseAndLoadJSON(text);
+        return;
+      } catch (err) {
+        console.warn("Open JSON cancelled or failed.", err);
+      }
+    }
+    // Fallback: trigger the hidden file input (existing Import JSON)
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "application/json";
+    input.onchange = (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      jsonHandleRef.current = null; // file input doesn't grant a persistent handle
+      const r = new FileReader();
+      r.onload = () => parseAndLoadJSON(String(r.result || ""));
+      r.readAsText(file);
+    };
+    input.click();
+  }
+
+  function parseAndLoadJSON(str) {
+    try {
+      const d = JSON.parse(str);
+      if (Array.isArray(d.nodes)) {
+        const normalized = d.nodes.map((n) => ({
+          ...n,
+          id: n.id || uid(),
+          name: String(n.name ?? "Unnamed"),
+          area: Math.max(1, toNumber(n.area, 20)),
+          textSize: clampTextSize(n.textSize ?? bulkTextSize),
+          strokeWidth: Math.max(1, Math.min(12, toNumber(n.strokeWidth, bulkStrokeWidth))),
+        }));
+        setNodes(normalized);
+      }
+      if (Array.isArray(d.links)) setLinks(d.links.filter((l) => l.source && l.target));
+      if (d.styles) setStyles((s) => ({ ...s, ...d.styles }));
+      if (d.bulk) {
+        const b = d.bulk;
+        if (typeof b.bulkFill === "string") setBulkFill(b.bulkFill);
+        if (typeof b.bulkFillTransparent === "boolean") setBulkFillTransparent(b.bulkFillTransparent);
+        if (typeof b.bulkStroke === "string") setBulkStroke(b.bulkStroke);
+        if (typeof b.bulkStrokeWidth === "number") setBulkStrokeWidth(Math.max(1, Math.min(12, b.bulkStrokeWidth)));
+        if (typeof b.bulkTextFont === "string") setBulkTextFont(b.bulkTextFont);
+        if (typeof b.bulkTextColor === "string") setBulkTextColor(b.bulkTextColor);
+        if (b.bulkTextSize != null) setBulkTextSize(clampTextSize(b.bulkTextSize));
+      }
+      if (typeof d.buffer === "number") setBuffer(d.buffer);
+      if (typeof d.arrowOverlap === "number") setArrowOverlap(d.arrowOverlap);
+      if (typeof d.rotationSensitivity === "number") setRotationSensitivity(d.rotationSensitivity);
+      if (typeof d.showMeasurements === "boolean") setShowMeasurements(d.showMeasurements);
+      if (d.exportBgMode) setExportBgMode(d.exportBgMode);
+      if (d.exportBgCustom) setExportBgCustom(d.exportBgCustom);
+      if (d.liveBgMode) setLiveBgMode(d.liveBgMode);
+      if (d.liveBgCustom) setLiveBgCustom(d.liveBgCustom);
+    } catch {
+      alert("Invalid JSON file");
+    }
+  }
+
 
   function importJSON(file) {
     const r = new FileReader();
@@ -935,8 +1080,10 @@ export default function BubbleAdjacencyApp() {
             <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={toggleFullscreen}>{isFullscreen ? "Exit Fullscreen" : "Fullscreen"}</button>
             <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={exportSVG}>Export SVG</button>
             <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={exportPNG}>Export PNG</button>
-            <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={exportJSON}>Export JSON</button>
-            <label className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm cursor-pointer">Import JSON
+            <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" title="Ctrl/⌘ + S" onClick={saveJSON}>Save JSON</button>
+            <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={saveJSONAs}>Save As…</button>
+            <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={openJSON}>Open JSON…</button>
+            <label className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm cursor-pointer">Import JSON (fallback)
               <input className="hidden" type="file" accept="application/json" onChange={(e) => e.target.files && importJSON(e.target.files[0])} />
             </label>
           </div>
