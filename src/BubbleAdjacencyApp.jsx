@@ -214,6 +214,7 @@ export default function BubbleAdjacencyApp() {
 
   // NEW: rotation sensitivity (adds a light "spin" force)
   const [rotationSensitivity, setRotationSensitivity] = useState(0); // 0..100
+  const [showMeasurements, setShowMeasurements] = useState(true);
   const [updateAreasFromList, setUpdateAreasFromList] = useState(false); // update areas too when applying list
 
   // Edge style presets (necessary vs ideal)
@@ -909,6 +910,14 @@ export default function BubbleAdjacencyApp() {
               <input type="number" min={0} max={100} value={rotationSensitivity} className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" onChange={(e) => setRotationSensitivity(Math.max(0, Math.min(100, +e.target.value || 0)))} />
               <span className="opacity-70">%</span>
             </div>
+            {/* Measurements toggle */}
+            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
+              <label className="flex items-center gap-1">
+                <input type="checkbox" checked={showMeasurements} onChange={(e) => setShowMeasurements(e.target.checked)} />
+                show m² labels
+              </label>
+            </div>
+
 
             {/* Graph actions */}
             <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={() => setPhysics((p) => !p)}>{physics ? "Physics: ON" : "Physics: OFF"}</button>
@@ -1083,9 +1092,17 @@ VOD Review / Theater, 60`} value={rawList} onChange={(e) => setRawList(e.target.
                       })()}
                     </text>
 
+                    {showMeasurements && (
+
+
+                    
+
                     <text y={r - 18} textAnchor="middle" style={{ fill: THEME.subtle, fontSize: areaSize, fontFamily: labelFont }}>
                       {n.area} m²
                     </text>
+
+
+                    )}
                     <foreignObject x={-r} y={-18} width={r * 2} height={36} data-ignore-export>
                       <InlineEdit text={n.name} onChange={(val) => renameNode(n.id, val)} className="mx-auto text-center" />
                     </foreignObject>
