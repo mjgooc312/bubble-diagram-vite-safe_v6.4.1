@@ -1,1 +1,1 @@
-# Bubble Diagram Builder (reset physics variant)\n
+# Bubble Diagram Builder (reset physics, fixed vite.config.js)
