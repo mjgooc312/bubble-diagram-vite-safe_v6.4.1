@@ -1,18 +1,18 @@
+
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as d3 from "d3";
 
 /**
  * Bubble Diagram Builder – Force-directed (React + D3)
- * v4.4 — Physics reset + gentler spin + measurement toggle + safer PNG export
+ * v4.3 — Arrow overlap + Rotation sensitivity + Rounded color pickers
  *
- * Fixes & improvements vs your uploaded file:
- *  • Added “Reset physics” that zeroes velocities and pauses the sim.
- *  • Physics toggle now also zeroes velocities when turning OFF or ON, so rotation stops and won’t drift.
- *  • Gentler rotation sensitivity (spin force) so even mid‑range values feel controlled.
- *  • If rotationSensitivity is set to 0, residual velocities are cleared.
- *  • Optional toggle to show/hide area (m²) labels inside bubbles.
- *  • PNG export no longer uses deprecated `unescape`; uses a safe data URL.
- *  • Smoke tests newline literals fixed.
+ * What’s new vs your uploaded file:
+ *  • Arrow overlap slider: lets link lines/arrowheads extend inside the bubbles.
+ *  • Rotation sensitivity slider: adds a gentle tangential “spin” force so bubbles orbit/settle based on sensitivity.
+ *  • Color inputs styled as smooth rounded pills (no sharp corners).
+ *  • Presets persist arrowOverlap and rotationSensitivity along with the rest.
+ *
+ * Drop this into your Vite React app (e.g., src/BubbleAdjacencyApp.jsx) and render it.
  */
 
 // ---- Theme (UI chrome only; not the canvas background) ----------------------
@@ -172,10 +172,9 @@ function savePresets(obj) {
 }
 
 // ------------------------- Custom spin force ---------------------------------
-// Gentler base so rotation feels controlled across the slider range.
 function makeSpinForce(level /* 0..100 */) {
   let nodes = [];
-  const base = 0.00005; // was 0.0002 — reduced ~4x
+  const base = 0.0002; // tuning factor for smoothness
   function force(alpha) {
     if (!level) return;
     const k = base * level * alpha;
@@ -210,14 +209,12 @@ export default function BubbleAdjacencyApp() {
   // Buffer between bubbles
   const [buffer, setBuffer] = useState(6);
 
-  // Arrow can overlap the circles — in pixels
+  // NEW: arrows can overlap into the circles — in pixels
   const [arrowOverlap, setArrowOverlap] = useState(0); // 0..40+
 
-  // Rotation sensitivity (adds a light "spin" force)
+  // NEW: rotation sensitivity (adds a light "spin" force)
   const [rotationSensitivity, setRotationSensitivity] = useState(0); // 0..100
-
-  // Show/hide area (m²) labels
-  const [showMeasurements, setShowMeasurements] = useState(true);
+  const [updateAreasFromList, setUpdateAreasFromList] = useState(false); // update areas too when applying list
 
   // Edge style presets (necessary vs ideal)
   const [styles, setStyles] = useState({
@@ -264,7 +261,6 @@ export default function BubbleAdjacencyApp() {
     buffer,
     arrowOverlap,
     rotationSensitivity,
-    showMeasurements,
   });
   const pushHistory = () => { historyRef.current.push(snapshot()); futureRef.current = []; };
   function undo() {
@@ -275,7 +271,6 @@ export default function BubbleAdjacencyApp() {
     setBuffer(prev.buffer);
     setArrowOverlap(prev.arrowOverlap ?? 0);
     setRotationSensitivity(prev.rotationSensitivity ?? 0);
-    setShowMeasurements(prev.showMeasurements ?? true);
   }
   function redo() {
     if (!futureRef.current.length) return;
@@ -285,7 +280,6 @@ export default function BubbleAdjacencyApp() {
     setBuffer(next.buffer);
     setArrowOverlap(next.arrowOverlap ?? 0);
     setRotationSensitivity(next.rotationSensitivity ?? 0);
-    setShowMeasurements(next.showMeasurements ?? true);
   }
 
   // ---------------------------- Preset Persistence ---------------------------
@@ -297,7 +291,6 @@ export default function BubbleAdjacencyApp() {
     if (typeof p.buffer === "number") setBuffer(p.buffer);
     if (typeof p.arrowOverlap === "number") setArrowOverlap(p.arrowOverlap);
     if (typeof p.rotationSensitivity === "number") setRotationSensitivity(p.rotationSensitivity);
-    if (typeof p.showMeasurements === "boolean") setShowMeasurements(p.showMeasurements);
     if (p.bulk) {
       const b = p.bulk;
       if (typeof b.bulkFill === "string") setBulkFill(b.bulkFill);
@@ -321,7 +314,6 @@ export default function BubbleAdjacencyApp() {
       buffer,
       arrowOverlap,
       rotationSensitivity,
-      showMeasurements,
       bulk: {
         bulkFill,
         bulkFillTransparent,
@@ -336,7 +328,7 @@ export default function BubbleAdjacencyApp() {
     };
     savePresets(payload);
   }, [
-    styles, buffer, arrowOverlap, rotationSensitivity, showMeasurements,
+    styles, buffer, arrowOverlap, rotationSensitivity,
     bulkFill, bulkFillTransparent, bulkStroke, bulkStrokeWidth,
     bulkTextFont, bulkTextColor, bulkTextSize,
     exportBgMode, exportBgCustom,
@@ -352,27 +344,16 @@ export default function BubbleAdjacencyApp() {
       .force("charge", d3.forceManyBody().strength(-80))
       .force("collide", d3.forceCollide().radius((d) => (d.r || BASE_R_MIN) + buffer))
       .force("center", d3.forceCenter(0, 0))
-      .force("spin", makeSpinForce(rotationSensitivity));
+      .force("spin", makeSpinForce(rotationSensitivity)); // NEW
     simRef.current = sim;
     return () => sim.stop();
   }, []);
-
-  // Helper to zero velocities (prevents drift/rotation persistence)
-  const zeroVelocities = () => {
-    const sim = simRef.current;
-    if (!sim) return;
-    sim.nodes().forEach((n) => { n.vx = 0; n.vy = 0; });
-  };
 
   // Re-apply spin force when sensitivity changes
   useEffect(() => {
     const sim = simRef.current;
     if (!sim) return;
     sim.force("spin", makeSpinForce(rotationSensitivity));
-    if (rotationSensitivity === 0) {
-      // Stop any residual drift when moving to zero
-      zeroVelocities();
-    }
     if (physics && rotationSensitivity > 0) sim.alpha(0.5).restart();
   }, [rotationSensitivity, physics]);
 
@@ -398,7 +379,7 @@ export default function BubbleAdjacencyApp() {
     sim.force("x", d3.forceX().strength(0.03));
     sim.force("y", d3.forceY().strength(0.03));
 
-    if (physics) { sim.alpha(0.9).restart(); } else { sim.stop(); }
+    if (physics) sim.alpha(0.9).restart(); else sim.stop();
 
     const onTick = () => {
       if (rafRef.current != null) return;
@@ -437,10 +418,43 @@ export default function BubbleAdjacencyApp() {
     setLinkSource(null);
     setPhysics(true);
     setSelectedNodeId(null);
-    zeroVelocities();
     // Reset zoom to identity so fresh graph starts centered
     resetZoom();
   }
+  function updateFromList() {
+    if (!nodes.length) return; // nothing to update
+    const parsed = parseList(rawList || "");
+    if (!parsed.length) return;
+    pushHistory();
+    // Update names (and optionally areas) by index; keep positions/styles/links intact
+    setNodes((prev) => prev.map((n, i) => {
+      if (i >= parsed.length) return n;
+      const src = parsed[i];
+      return {
+        ...n,
+        name: src.name,
+        ...(updateAreasFromList ? { area: Math.max(1, +src.area || n.area) } : {}),
+      };
+    }));
+    // If parsed has more entries than nodes, append new nodes near center (no reset)
+    if (parsed.length > nodes.length) {
+      const extras = parsed.slice(nodes.length).map((x) => ({
+        id: Math.random().toString(36).slice(2, 9),
+        name: x.name,
+        area: Math.max(1, +x.area || 20),
+        x: (Math.random() - 0.5) * 40,
+        y: (Math.random() - 0.5) * 40,
+        fill: bulkFillTransparent ? "none" : bulkFill,
+        stroke: bulkStroke,
+        strokeWidth: bulkStrokeWidth,
+        textFont: bulkTextFont,
+        textColor: bulkTextColor,
+        textSize: clampTextSize(bulkTextSize),
+      }));
+      setNodes((prev) => [...prev, ...extras]);
+    }
+  }
+
 
   function clearAll() {
     pushHistory();
@@ -584,6 +598,7 @@ export default function BubbleAdjacencyApp() {
     clone.querySelectorAll('[data-ignore-export]').forEach((el) => el.remove());
     const svgStr = new XMLSerializer().serializeToString(clone);
     const img = new Image();
+    const svg64 = btoa(unescape(encodeURIComponent(svgStr)));
     img.onload = () => {
       const canvas = document.createElement("canvas"); canvas.width = 2200; canvas.height = 1400;
       const ctx = canvas.getContext("2d");
@@ -597,8 +612,7 @@ export default function BubbleAdjacencyApp() {
       canvas.toBlob((blob) => { if (!blob) return; const url = URL.createObjectURL(blob); download(url, `bubble-diagram-${Date.now()}.png`); });
     };
     img.onerror = () => alert("PNG export failed. Try SVG export if issue persists.");
-    // Safe data URL (no deprecated unescape/btoa usage)
-    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgStr);
+    img.src = `data:image/svg+xml;base64,${svg64}`;
   }
 
   function exportJSON() {
@@ -617,7 +631,6 @@ export default function BubbleAdjacencyApp() {
         buffer,
         arrowOverlap,
         rotationSensitivity,
-        showMeasurements,
         exportBgMode, exportBgCustom,
         liveBgMode, liveBgCustom,
       }, null, 2)],
@@ -657,7 +670,6 @@ export default function BubbleAdjacencyApp() {
         if (typeof d.buffer === "number") setBuffer(d.buffer);
         if (typeof d.arrowOverlap === "number") setArrowOverlap(d.arrowOverlap);
         if (typeof d.rotationSensitivity === "number") setRotationSensitivity(d.rotationSensitivity);
-        if (typeof d.showMeasurements === "boolean") setShowMeasurements(d.showMeasurements);
         if (d.exportBgMode) setExportBgMode(d.exportBgMode);
         if (d.exportBgCustom) setExportBgCustom(d.exportBgCustom);
         if (d.liveBgMode) setLiveBgMode(d.liveBgMode);
@@ -736,28 +748,6 @@ export default function BubbleAdjacencyApp() {
     } else {
       document.exitFullscreen?.();
     }
-  }
-
-  // ---------------------------- Physics control ------------------------------
-  function resetPhysics() {
-    zeroVelocities();
-    const sim = simRef.current;
-    sim?.alpha(0).stop();
-    setPhysics(false);
-  }
-  function togglePhysicsState() {
-    setPhysics((p) => {
-      const next = !p;
-      const sim = simRef.current;
-      // Always zero velocities when toggling to avoid drift on resume
-      zeroVelocities();
-      if (next) {
-        sim?.alpha(0.8).restart();
-      } else {
-        sim?.alpha(0).stop();
-      }
-      return next;
-    });
   }
 
   // ---------------------------- Render ---------------------------------------
@@ -904,7 +894,7 @@ export default function BubbleAdjacencyApp() {
               <span className="opacity-70">px</span>
             </div>
 
-            {/* Arrow Overlap */}
+            {/* NEW: Arrow Overlap */}
             <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
               <span className="opacity-70">Arrow overlap:</span>
               <input type="range" min={0} max={60} step={1} value={arrowOverlap} onChange={(e) => setArrowOverlap(+e.target.value)} />
@@ -912,7 +902,7 @@ export default function BubbleAdjacencyApp() {
               <span className="opacity-70">px</span>
             </div>
 
-            {/* Rotation Sensitivity */}
+            {/* NEW: Rotation Sensitivity */}
             <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
               <span className="opacity-70">Rotation sensitivity:</span>
               <input type="range" min={0} max={100} step={1} value={rotationSensitivity} onChange={(e) => setRotationSensitivity(+e.target.value)} />
@@ -920,17 +910,8 @@ export default function BubbleAdjacencyApp() {
               <span className="opacity-70">%</span>
             </div>
 
-            {/* Measurements toggle */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
-              <label className="flex items-center gap-1">
-                <input type="checkbox" checked={showMeasurements} onChange={(e) => setShowMeasurements(e.target.checked)} />
-                show m² labels
-              </label>
-            </div>
-
             {/* Graph actions */}
-            <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={togglePhysicsState}>{physics ? "Physics: ON" : "Physics: OFF"}</button>
-            <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={resetPhysics}>Reset physics</button>
+            <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={() => setPhysics((p) => !p)}>{physics ? "Physics: ON" : "Physics: OFF"}</button>
             <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={() => setNodes([...nodes])}>Re-Layout</button>
 
             {/* Zoom controls */}
@@ -962,6 +943,11 @@ export default function BubbleAdjacencyApp() {
             <div className="flex gap-2">
               <button className="px-3 py-1.5 rounded-xl border border-[#2a2a3a] text-xs" onClick={() => setRawList(SAMPLE_TEXT)}>Load Sample</button>
               <button className="px-3 py-1.5 rounded-xl border border-[#2a2a3a] text-xs" onClick={onGenerate}>Generate Bubbles</button>
+              <button className="px-3 py-1.5 rounded-xl border border-[#2a2a3a] text-xs" onClick={updateFromList}>Update from list</button>
+              <label className="flex items-center gap-1 text-xs text-[#9aa0a6]">
+                <input type="checkbox" checked={updateAreasFromList} onChange={(e)=>setUpdateAreasFromList(e.target.checked)} />
+                also update areas
+              </label>
             </div>
           </div>
           <textarea className="w-full min-h-[180px] text-sm bg-transparent border rounded-xl border-[#2a2a3a] p-3 outline-none" placeholder={`Example (one per line):
@@ -1044,7 +1030,7 @@ VOD Review / Theater, 60`} value={rawList} onChange={(e) => setRawList(e.target.
                 const dx = (t.x - s.x), dy = (t.y - s.y); const dist = Math.hypot(dx, dy) || 1; const nx = dx / dist, ny = dy / dist;
                 const rs = rOf(s.area), rt = rOf(t.area);
 
-                // Let arrow/line start & end move inside the circle by `arrowOverlap` (clamped per radius)
+                // NEW: let arrow/line start & end move inside the circle by `arrowOverlap` (clamped per radius)
                 const insetS = Math.max(0, Math.min(arrowOverlap, rs - 2));
                 const insetT = Math.max(0, Math.min(arrowOverlap, rt - 6));
 
@@ -1081,16 +1067,25 @@ VOD Review / Theater, 60`} value={rawList} onChange={(e) => setRawList(e.target.
                   >
                     <circle r={r} fill={n.fill ?? (bulkFillTransparent ? "none" : bulkFill)} stroke={hi ? styles.necessary.color : (n.stroke || bulkStroke)} strokeWidth={n.strokeWidth ?? bulkStrokeWidth} />
                     <circle r={r - 2} fill="none" stroke="#2c2c3c" strokeWidth={1} />
-                    <text textAnchor="middle" dominantBaseline="middle" className="select-none" style={{ fill: labelColor, fontSize: labelSize, fontWeight: 600, letterSpacing: 0.4, fontFamily: labelFont }}>
-                      {wrapText(n.name, 16).map((line, i) => (
-                        <tspan key={i} x={0} dy={i === 0 ? -4 : labelSize + 2}>{line}</tspan>
-                      ))}
+                    
+                    <text textAnchor="middle" dominantBaseline="middle" className="select-none"
+                          style={{ fill: labelColor, fontSize: labelSize, fontWeight: 600, letterSpacing: 0.4, fontFamily: labelFont }}>
+                      {(() => {
+                        const pad = 10;
+                        const maxW = Math.max(20, (r - pad) * 2);
+                        const lines = wrapToWidth(n.name, labelFont, labelSize, maxW, 5);
+                        const gap = Math.max(2, Math.round(labelSize * 0.2));
+                        const total = lines.length * labelSize + (lines.length - 1) * gap;
+                        const startY = -total / 2 + labelSize * 0.8;
+                        return lines.map((line, i) => (
+                          <tspan key={i} x={0} y={startY + i * (labelSize + gap)}>{line}</tspan>
+                        ));
+                      })()}
                     </text>
-                    {showMeasurements && (
-                      <text y={r - 18} textAnchor="middle" style={{ fill: THEME.subtle, fontSize: areaSize, fontFamily: labelFont }}>
-                        {n.area} m²
-                      </text>
-                    )}
+
+                    <text y={r - 18} textAnchor="middle" style={{ fill: THEME.subtle, fontSize: areaSize, fontFamily: labelFont }}>
+                      {n.area} m²
+                    </text>
                     <foreignObject x={-r} y={-18} width={r * 2} height={36} data-ignore-export>
                       <InlineEdit text={n.name} onChange={(val) => renameNode(n.id, val)} className="mx-auto text-center" />
                     </foreignObject>
@@ -1119,7 +1114,7 @@ VOD Review / Theater, 60`} value={rawList} onChange={(e) => setRawList(e.target.
           </summary>
           <div className="mt-3 text-sm leading-6 text-[#d8d8e2]">
             <p><strong>Authored by:</strong> Mark Jay O. Gooc — Architecture student, Batangas State University – TNEU (ARC‑5108)</p>
-            <p className="opacity-80">Bubble Diagram Builder (React + D3). Version 4.4 — physics reset, gentler rotation sensitivity, measurement toggle, preset persistence, live background controls, zoom/pan, fullscreen, and improved exports.</p>
+            <p className="opacity-80">Bubble Diagram Builder (React + D3). Version 4.3 — arrow overlap, rotation sensitivity, rounded color pickers, preset persistence, live background controls, zoom/pan, fullscreen, and improved exports.</p>
           </div>
         </details>
       </div>
@@ -1176,7 +1171,69 @@ function InlineEditField({ label, value, onChange }) {
 }
 
 // Wrap long labels into tspans
-function wrapText(text, max = 16) {
+function wrapText(text, max = 16)
+// --- Precise width-based SVG text wrapping (uses canvas measureText) ---------
+const _measureCtx = (() => {
+  try {
+    const c = document.createElement("canvas");
+    return c.getContext("2d");
+  } catch { return null; }
+})();
+
+function measureWidth(s, fontFamily, fontPx) {
+  const ctx = _measureCtx;
+  if (!ctx) return s.length * fontPx * 0.6; // fallback heuristic
+  ctx.font = `${Math.max(8, fontPx)}px ${fontFamily || "system-ui, Arial"}`;
+  return ctx.measureText(String(s)).width;
+}
+
+/**
+ * Wrap a label to a specific max pixel width using canvas text metrics.
+ * - Breaks on spaces when possible.
+ * - If a single word is too long, it hard-wraps by characters.
+ * - Limits lines to maxLines (adds ellipsis if truncated).
+ */
+function wrapToWidth(label, fontFamily, fontPx, maxWidth, maxLines = 5) {
+  const words = String(label).split(/\s+/).filter(Boolean);
+  const lines = [];
+  let cur = "";
+
+  const pushLine = (s) => { if (s) lines.push(s); };
+
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    if (!cur) {
+      // If the word alone exceeds width, hard-wrap by chars
+      if (measureWidth(w, fontFamily, fontPx) > maxWidth) {
+        let buf = "";
+        for (const ch of w) {
+          if (measureWidth(buf + ch, fontFamily, fontPx) <= maxWidth) buf += ch;
+          else { pushLine(buf); buf = ch; }
+          if (lines.length >= maxLines) break;
+        }
+        cur = buf;
+      } else {
+        cur = w;
+      }
+    } else {
+      if (measureWidth(cur + " " + w, fontFamily, fontPx) <= maxWidth) {
+        cur += " " + w;
+      } else {
+        pushLine(cur);
+        cur = w;
+      }
+    }
+    if (lines.length >= maxLines) break;
+  }
+  if (lines.length < maxLines && cur) pushLine(cur);
+
+  // Ellipsize if too many words to fit
+  if (lines.length > maxLines) {
+    return lines.slice(0, maxLines - 1).concat([lines[maxLines - 1] + "…"]);
+  }
+  return lines;
+}
+ {
   const words = String(text).split(/\s+/); const lines = []; let cur = "";
   for (const w of words) {
     if ((cur + " " + w).trim().length > max) { if (cur) lines.push(cur); cur = w; }
@@ -1189,7 +1246,7 @@ function wrapText(text, max = 16) {
 // Smoke tests (console)
 (function runSmokeTests() {
   try {
-    const parsed = parseList("A, 10\nB 20\nC-30\nNoArea");
+    const parsed = parseList("A, 10\\nB 20\\nC-30\\nNoArea");
     console.assert(parsed.length === 4, "parseList length");
     console.assert(parsed[0].area === 10 && parsed[1].area === 20 && parsed[2].area === 30, "parseList areas");
     const r = scaleRadius(parsed);
