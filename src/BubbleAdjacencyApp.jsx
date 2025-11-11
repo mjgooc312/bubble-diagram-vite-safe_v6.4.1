@@ -5,13 +5,13 @@ import * as d3 from "d3";
  * Bubble Diagram Builder – Force-directed (React + D3)
  * v4.7.0 — v1.0 label • Multi-select + Lasso • Pin/Lock • Adjacency Matrix • Conflict detector
  * Autosave/Recovery • Keyboard Cheatsheet (?) • High-contrast mode • Arrow layer above bubbles
- * Legend toggle (draggable, included in export)
+ * Legend toggle (draggable, included in export) • Triangular Dot Matrix (synced)
  *
  * New in this build:
  * 1) "v1.0" label in header next to title.
  * 2) Multi-select + lasso (Shift+drag on background). Move as a group; style or delete many.
  * 3) Lock/Pin nodes (per-node or bulk for selection). Locked nodes are fixed against physics.
- * 4) Adjacency Matrix (editable) to create/remove links bidirectionally.
+ * 4) Adjacency Matrix (editable) + Triangular Dot Matrix (click-to-cycle).
  * 5) Conflict detector: expected "necessary" pairs + long-link warnings with highlight overlay.
  * 6) Autosave every 45s to localStorage + quick restore on load.
  * 7) Keyboard cheatsheet overlay with '?' (or Shift+/). Also: A=Select all, Esc=Clear, Arrows=Nudge.
@@ -117,6 +117,10 @@ const sanitizeColorId = (c) => String(c).replace(/[^a-zA-Z0-9]/g, "");
 const markerId = (kind, shape, color) =>
   `m-${kind}-${shape}-${sanitizeColorId(color)}`;
 
+// --- Relations (for dot matrix + matrix table)
+const REL_STATES = ["none", "ideal", "necessary"];
+const cycleRel = (t) => REL_STATES[(REL_STATES.indexOf(t) + 1) % REL_STATES.length];
+
 function MarkerDefs({ styles }) {
   const defs = [];
   ["necessary", "ideal"].forEach((k) => {
@@ -145,21 +149,10 @@ function MarkerDefs({ styles }) {
             />
           )}
           {shape === "circle" && (
-            <circle
-              cx={kind === "end" ? 7 : 3}
-              cy={3.5}
-              r={3}
-              fill={st.color}
-            />
+            <circle cx={kind === "end" ? 7 : 3} cy={3.5} r={3} fill={st.color} />
           )}
           {shape === "square" && (
-            <rect
-              x={kind === "end" ? 3 : 1}
-              y={1}
-              width={6}
-              height={6}
-              fill={st.color}
-            />
+            <rect x={kind === "end" ? 3 : 1} y={1} width={6} height={6} fill={st.color} />
           )}
           {shape === "diamond" && (
             <polygon
@@ -169,13 +162,7 @@ function MarkerDefs({ styles }) {
             />
           )}
           {shape === "bar" && (
-            <rect
-              x={kind === "end" ? 7.5 : 1.5}
-              y={0.5}
-              width={1.5}
-              height={6.5}
-              fill={st.color}
-            />
+            <rect x={kind === "end" ? 7.5 : 1.5} y={0.5} width={1.5} height={6.5} fill={st.color} />
           )}
         </marker>
       );
@@ -1854,7 +1841,7 @@ export default function BubbleAdjacencyApp() {
                 <li><b>Select</b> a bubble to edit. <b>Ctrl/⌘-click</b> or <b>Shift-click</b> to multi-select.</li>
                 <li><b>Lasso</b>: hold <b>Shift</b> and drag on background to select an area.</li>
                 <li><b>Group-drag</b>: drag any selected bubble to move the whole selection.</li>
-                <li>Use <b>Matrix</b> to add/remove adjacencies bidirectionally.</li>
+                <li><b>Matrix</b> to add/remove adjacencies bidirectionally; or use the <b>Dot Matrix</b> and click dots.</li>
                 <li><b>Conflicts</b>: paste expected “necessary” pairs and set long-link tolerance.</li>
                 <li>Arrows render <b>above</b> bubbles so arrowheads remain visible when overlapping.</li>
               </ol>
@@ -2219,6 +2206,15 @@ export default function BubbleAdjacencyApp() {
               )}
             </div>
           </details>
+
+          {/* Adjacency Dot Matrix (triangular) */}
+          <TriangularMatrix
+            nodes={nodes}
+            getLinkTypeBetween={getLinkTypeBetween}
+            setLinkTypeBetween={setLinkTypeBetween}
+            styles={styles}
+            theme={THEME}
+          />
 
           {/* Adjacency Matrix (editable) */}
           <details className="card">
@@ -2872,6 +2868,168 @@ function InlineEditField({ label, value, onChange }) {
         className="bg-transparent border border-[#2a2a3a] rounded px-2 py-1 text-[12px] text-white"
       />
     </label>
+  );
+}
+
+/** Triangular Dot Matrix (upper-triangle) — synced with links
+ *  Click a dot to cycle: none → ideal → necessary → none
+ */
+function TriangularMatrix({
+  nodes,
+  getLinkTypeBetween,
+  setLinkTypeBetween,
+  styles,
+  theme = THEME,
+}) {
+  const [orderBy, setOrderBy] = useState("name"); // 'name' | 'area'
+
+  const ordered = useMemo(() => {
+    const arr = [...nodes];
+    if (orderBy === "area") arr.sort((a, b) => (b.area || 0) - (a.area || 0));
+    else arr.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    return arr;
+  }, [nodes, orderBy]);
+
+  const size = 22; // cell
+  const pad = 10;
+  const dotR = 6;
+  const gridStroke = theme.border;
+
+  const colorFor = (t) => {
+    if (t === "necessary") return styles.necessary.color;
+    if (t === "ideal") return styles.ideal.color;
+    return theme.subtle;
+  };
+
+  return (
+    <div className="card">
+      <div className="flex items-center justify-between">
+        <div className="group-title">Adjacency Dot Matrix (triangular)</div>
+        <div className="text-xs flex items-center gap-2">
+          <span className="opacity-70">Order by</span>
+          <button
+            className={`btn btn-xs ${orderBy === "name" ? "bg-white/10" : ""}`}
+            onClick={() => setOrderBy("name")}
+          >
+            name
+          </button>
+          <button
+            className={`btn btn-xs ${orderBy === "area" ? "bg-white/10" : ""}`}
+            onClick={() => setOrderBy("area")}
+          >
+            area
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-3 overflow-auto" style={{ maxHeight: 360 }}>
+        <svg
+          width={pad + ordered.length * size + 260}
+          height={pad + ordered.length * size + 30}
+        >
+          {/* top labels */}
+          {ordered.map((n, j) => (
+            <text
+              key={"t" + n.id}
+              x={pad + j * size + size / 2}
+              y={10}
+              transform={`rotate(-45 ${pad + j * size + size / 2} 10)`}
+              textAnchor="start"
+              fontSize="10"
+              fill="#cfd3dc"
+              style={{ userSelect: "none" }}
+              title={n.name}
+            >
+              {n.name}
+            </text>
+          ))}
+
+          {/* rows */}
+          {ordered.map((ri, r) => (
+            <g key={"r" + ri.id} transform={`translate(0, ${pad + r * size})`}>
+              {/* left labels */}
+              <text
+                x={0}
+                y={size * 0.8}
+                fontSize="11"
+                fill="#cfd3dc"
+                style={{ userSelect: "none" }}
+              >
+                {ri.name}
+              </text>
+
+              {/* cells (upper triangle incl. diagonal) */}
+              {ordered.map((ci, c) => {
+                if (c < r) return null;
+                const cx = pad + c * size + size / 2 + 1;
+                const cy = size / 2;
+                const isDiag = ri.id === ci.id;
+                const rel = isDiag ? "none" : getLinkTypeBetween(ri.id, ci.id);
+
+                return (
+                  <g
+                    key={ri.id + "|" + ci.id}
+                    transform={`translate(${cx},${cy})`}
+                    style={{ cursor: isDiag ? "default" : "pointer" }}
+                    onClick={() => {
+                      if (isDiag) return;
+                      const next = cycleRel(rel);
+                      setLinkTypeBetween(ri.id, ci.id, next);
+                    }}
+                    title={`${ri.name} × ${ci.name}: ${rel}`}
+                  >
+                    {/* diamond cell frame */}
+                    <rect
+                      x={-size / 2}
+                      y={-size / 2}
+                      width={size}
+                      height={size}
+                      fill="none"
+                      stroke={gridStroke}
+                      transform="rotate(45)"
+                    />
+                    {/* dot */}
+                    {!isDiag ? (
+                      <circle
+                        r={dotR}
+                        fill={colorFor(rel)}
+                        opacity={rel === "none" ? 0.55 : 0.95}
+                      />
+                    ) : (
+                      <circle r={2.5} fill={gridStroke} opacity={0.8} />
+                    )}
+                  </g>
+                );
+              })}
+            </g>
+          ))}
+
+          {/* legend (right side) */}
+          <g transform={`translate(${pad + ordered.length * size + 24}, ${26})`}>
+            {[["necessary", "adjacent"], ["ideal", "nearby"], ["none", "not related"]].map(
+              ([k, label], i) => (
+                <g key={k} transform={`translate(0, ${i * 18})`}>
+                  <circle
+                    r="6"
+                    cx="0"
+                    cy="0"
+                    fill={colorFor(k)}
+                    opacity={k === "none" ? 0.55 : 0.95}
+                  />
+                  <text x="12" y="4" fontSize="11" fill="#cfd3dc">
+                    {label}
+                  </text>
+                </g>
+              )
+            )}
+          </g>
+        </svg>
+      </div>
+
+      <p className="mt-2 text-xs opacity-70">
+        Click a dot to cycle: <b>none</b> → <b>ideal</b> → <b>necessary</b> → <b>none</b>. Changes are reflected in the bubble diagram instantly.
+      </p>
+    </div>
   );
 }
 
