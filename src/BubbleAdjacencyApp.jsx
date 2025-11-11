@@ -1329,7 +1329,7 @@ function zeroVelocities() {
         <div className="col-span-1 bg-[#121220] rounded-2xl border border-[#2a2a3a] p-4">
           <div className="flex items-center justify-between gap-2 mb-2">
             <h2 className="text-sm font-semibold tracking-wide text-[#9aa0a6]">List of Spaces (name, area m²)</h2>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <button className="px-3 py-1.5 rounded-xl border border-[#2a2a3a] text-xs" onClick={() => setRawList(SAMPLE_TEXT)}>Load Sample</button>
               <button className="px-3 py-1.5 rounded-xl border border-[#2a2a3a] text-xs" onClick={onGenerate}>Generate Bubbles</button>
               <button className="px-3 py-1.5 rounded-xl border border-[#2a2a3a] text-xs" onClick={updateFromList}>Update from list</button>
@@ -1340,7 +1340,7 @@ function zeroVelocities() {
               </label>
             </div>
           </div>
-          <textarea className="w-full min-h-[180px] text-sm bg-transparent border rounded-xl border-[#2a2a3a] p-3 outline-none" placeholder={`Example (one per line):
+          <textarea className="w-full" className="w-full min-h-[180px] text-sm bg-transparent border rounded-xl border-[#2a2a3a] p-3 outline-none" placeholder={`Example (one per line):
 Match Admin Room, 90
 VOD Review / Theater, 60`} value={rawList} onChange={(e) => setRawList(e.target.value)} />
           <p className="mt-2 text-xs text-[#9aa0a6]">Formats: <code>name, area</code> • <code>name - area</code> • <code>name area</code></p>
@@ -1411,7 +1411,7 @@ VOD Review / Theater, 60`} value={rawList} onChange={(e) => setRawList(e.target.
 
 {/* Canvas */}
 
-      <div className="mx-auto max-w-[1400px] px-6 my-8 md:pl-[460px] md:pr-[460px]">
+      <div className="w-full px-6 my-8 md:pl-[460px] md:pr-[460px]">
         <div ref={containerRef} className="relative rounded-2xl border border-[#2a2a3a] overflow-hidden" style={{ background: liveBg }}>
           <svg ref={svgRef} width={"100%"} height={700} viewBox={`-600 -350 1200 700`} className="block">
             <MarkerDefs styles={styles} />
