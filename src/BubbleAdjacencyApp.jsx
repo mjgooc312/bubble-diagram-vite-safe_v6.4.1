@@ -34,6 +34,15 @@ const TEXT_MAX = 28;
 
 // Font stacks
 const FONT_STACKS = {
+
+// App version & changelog banner
+const APP_VERSION = "6.5.0";
+const CHANGELOG_ITEMS = [
+  "NEW: Scenes — save/restore positions and zoom.",
+  "FIXED: Update-from-list maps by name; correct bubble updates after JSON import.",
+  "NEW: Precise label wrapping inside bubbles.",
+  "TWEAK: Toolbar organized into clear sections."
+];
   Outfit: "Outfit, Inter, system-ui, Arial, sans-serif",
   Inter: "Inter, system-ui, Arial, sans-serif",
   Poppins: "Poppins, system-ui, Arial, sans-serif",
@@ -219,6 +228,18 @@ export default function BubbleAdjacencyApp() {
 
   // NEW: rotation sensitivity (adds a light "spin" force)
   const [rotationSensitivity, setRotationSensitivity] = useState(0); // 0..100
+
+  // Changelog banner show-once per version
+  const [showChangelog, setShowChangelog] = useState(false);
+  useEffect(() => {
+    try {
+      const seen = localStorage.getItem("bdb_seen_version");
+      if (seen !== APP_VERSION) {
+        setShowChangelog(true);
+        localStorage.setItem("bdb_seen_version", APP_VERSION);
+      }
+    } catch {}
+  }, []);
   const [showMeasurements, setShowMeasurements] = useState(true);
 
 // --- Scenes (positions + zoom) ---
@@ -1075,12 +1096,33 @@ function zeroVelocities() {
       `}</style>
 
       {/* Toolbar */}
-      <div className="sticky top-0 z-10 backdrop-blur bg-black/30 border-b border-[#2a2a3a]">
-        <div className="mx-auto max-w-[1400px] px-4 py-3 flex flex-wrap items-center gap-3">
+      
+      {/* Changelog banner */}
+      {showChangelog && (
+        <div className="bg-[#0f1b2d] border-b border-[#1f3a5f] py-2">
+          <div className="mx-auto max-w-[1400px] px-4 flex items-start gap-3">
+            <div className="text-xs font-semibold">
+              Bubble Diagram Builder updated to v{APP_VERSION}
+            </div>
+            <ul className="text-xs list-disc pl-5 space-y-0.5">
+              {CHANGELOG_ITEMS.map((t,i)=>(<li key={i}>{t}</li>))}
+            </ul>
+            <button
+              className="ml-auto px-2 py-1 text-xs rounded-md border border-[#2a2a3a] hover:bg-white/5"
+              onClick={()=>setShowChangelog(false)}>
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+<div className="sticky top-0 z-10 backdrop-blur bg-black/30 border-b border-[#2a2a3a]">
+        <div className="mx-auto max-w-[1400px] px-4 py-3 grid grid-cols-12 gap-3 auto-rows-min items-start">
           <div className="font-semibold tracking-wide text-sm text-[#9aa0a6]">Bubble Diagram Builder</div>
 
           <div className="ml-auto flex flex-wrap items-center gap-2">
-            {/* Modes */}
+            
+            <div className="col-span-12 text-[10px] uppercase tracking-[0.14em] text-[#9aa0a6]/80 mt-1">Modes & Actions</div>
+{/* Modes */}
             <button className={`px-3 py-2 rounded-xl border ${mode === "select" ? "bg-white/10" : ""} border-[#2a2a3a] text-sm`} onClick={() => setMode("select")}>
               Select / Drag
             </button>
@@ -1094,7 +1136,7 @@ function zeroVelocities() {
 
             {/* Line style controls */}
             {["necessary", "ideal"].map((key) => (
-              <div key={key} className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
+              <div key={key} className="col-span-12 md:col-span-6 lg:col-span-4 flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
                 <span className="opacity-70 w-16 capitalize">{key}</span>
                 <input type="color" value={styles[key].color} title={`${key} color`} onChange={(e) => setStyles((s) => ({ ...s, [key]: { ...s[key], color: e.target.value } }))} />
                 <label className="flex items-center gap-1"><input type="checkbox" checked={styles[key].dashed} onChange={(e) => setStyles((s) => ({ ...s, [key]: { ...s[key], dashed: e.target.checked } }))} /> dashed</label>
@@ -1112,8 +1154,10 @@ function zeroVelocities() {
               </div>
             ))}
 
-            {/* Bubble (node) bulk styles */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
+            
+            <div className="col-span-12 text-[10px] uppercase tracking-[0.14em] text-[#9aa0a6]/80 mt-1">Bubbles</div>
+{/* Bubble (node) bulk styles */}
+            <div className="col-span-12 md:col-span-6 lg:col-span-4 flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
               <span className="opacity-70">Bubbles:</span>
               <label className="flex items-center gap-1">Fill
                 <input type="color" value={bulkFill} onChange={(e) => setBulkFill(e.target.value)} disabled={bulkFillTransparent} />
@@ -1129,7 +1173,7 @@ function zeroVelocities() {
             </div>
 
             {/* Text (label) bulk styles */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
+            <div className="col-span-12 md:col-span-6 lg:col-span-4 flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
               <span className="opacity-70">Labels:</span>
               <select className="bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" value={bulkTextFont} onChange={(e) => setBulkTextFont(e.target.value)}>
                 <option value={FONT_STACKS.Outfit}>Outfit</option>
@@ -1146,8 +1190,10 @@ function zeroVelocities() {
               <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" onClick={applyBulkTextStyles}>Apply to all</button>
             </div>
 
-            {/* Export background */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
+            
+            <div className="col-span-12 text-[10px] uppercase tracking-[0.14em] text-[#9aa0a6]/80 mt-1">Export Background</div>
+{/* Export background */}
+            <div className="col-span-12 md:col-span-6 lg:col-span-4 flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
               <span className="opacity-70">Export BG:</span>
               <label className="flex items-center gap-1"><input type="radio" name="bg-exp" checked={exportBgMode === "transparent"} onChange={() => setExportBgMode("transparent")} /> transparent</label>
               <label className="flex items-center gap-1"><input type="radio" name="bg-exp" checked={exportBgMode === "white"} onChange={() => setExportBgMode("white")} /> white</label>
@@ -1155,8 +1201,10 @@ function zeroVelocities() {
               <input type="color" value={exportBgCustom} onChange={(e) => setExportBgCustom(e.target.value)} disabled={exportBgMode !== "custom"} />
             </div>
 
-            {/* Live background */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
+            
+            <div className="col-span-12 text-[10px] uppercase tracking-[0.14em] text-[#9aa0a6]/80 mt-1">Live Background</div>
+{/* Live background */}
+            <div className="col-span-12 md:col-span-6 lg:col-span-4 flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
               <span className="opacity-70">Live BG:</span>
               <label className="flex items-center gap-1"><input type="radio" name="bg-live" checked={liveBgMode === "transparent"} onChange={() => setLiveBgMode("transparent")} /> transparent</label>
               <label className="flex items-center gap-1"><input type="radio" name="bg-live" checked={liveBgMode === "white"} onChange={() => setLiveBgMode("white")} /> white</label>
@@ -1164,8 +1212,10 @@ function zeroVelocities() {
               <input type="color" value={liveBgCustom} onChange={(e) => setLiveBgCustom(e.target.value)} disabled={liveBgMode !== "custom"} />
             </div>
 
-            {/* Buffer */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
+            
+            <div className="col-span-12 text-[10px] uppercase tracking-[0.14em] text-[#9aa0a6]/80 mt-1">Spacing & Overlap</div>
+{/* Buffer */}
+            <div className="col-span-12 md:col-span-6 lg:col-span-4 flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
               <span className="opacity-70">Buffer:</span>
               <input type="range" min={0} max={80} step={1} value={buffer} onChange={(e) => setBuffer(+e.target.value)} />
               <input type="number" min={0} max={80} value={buffer} className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" onChange={(e) => setBuffer(Math.max(0, Math.min(80, +e.target.value || 0)))} />
@@ -1173,7 +1223,7 @@ function zeroVelocities() {
             </div>
 
             {/* NEW: Arrow Overlap */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
+            <div className="col-span-12 md:col-span-6 lg:col-span-4 flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
               <span className="opacity-70">Arrow overlap:</span>
               <input type="range" min={0} max={60} step={1} value={arrowOverlap} onChange={(e) => setArrowOverlap(+e.target.value)} />
               <input type="number" min={0} max={200} value={arrowOverlap} className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" onChange={(e) => setArrowOverlap(Math.max(0, Math.min(200, +e.target.value || 0)))} />
@@ -1181,14 +1231,14 @@ function zeroVelocities() {
             </div>
 
             {/* NEW: Rotation Sensitivity */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
+            <div className="col-span-12 md:col-span-6 lg:col-span-4 flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
               <span className="opacity-70">Rotation sensitivity:</span>
               <input type="range" min={0} max={100} step={1} value={rotationSensitivity} onChange={(e) => setRotationSensitivity(+e.target.value)} />
               <input type="number" min={0} max={100} value={rotationSensitivity} className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" onChange={(e) => setRotationSensitivity(Math.max(0, Math.min(100, +e.target.value || 0)))} />
               <span className="opacity-70">%</span>
             </div>
             {/* Measurements toggle */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
+            <div className="col-span-12 md:col-span-6 lg:col-span-4 flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
               <label className="flex items-center gap-1">
                 <input type="checkbox" checked={showMeasurements} onChange={(e) => setShowMeasurements(e.target.checked)} />
                 show m² labels
@@ -1203,7 +1253,7 @@ function zeroVelocities() {
             
 {/* Scenes */}
 <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-2 py-2 text-xs">
-  <span className="opacity-70">Scene:</span>
+  \n            <div className="col-span-12 text-[10px] uppercase tracking-[0.14em] text-[#9aa0a6]/80 mt-1">Scenes</div>\n            <span className="opacity-70">Scene:</span>
   <select className="bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
           value={activeSceneId || ""}
           onChange={(e) => setActiveSceneId(e.target.value || null)}>
@@ -1219,7 +1269,9 @@ function zeroVelocities() {
   <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" disabled={!activeSceneId} onClick={() => activeSceneId && deleteScene(activeSceneId)}>Delete</button>
 </div>
 
-            {/* Zoom controls */}
+            
+            <div className="col-span-12 text-[10px] uppercase tracking-[0.14em] text-[#9aa0a6]/80 mt-1">View & Export</div>
+{/* Zoom controls */}
             <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-2 py-2 text-xs">
               <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" onClick={zoomOut}>−</button>
               <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" onClick={resetZoom}>Reset</button>
