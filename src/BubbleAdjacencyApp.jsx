@@ -1402,9 +1402,6 @@ VOD Review / Theater, 60`} value={rawList} onChange={(e) => setRawList(e.target.
                         fontWeight: 600,
                         letterSpacing: 0.4,
                         fontFamily: labelFont,
-                        paintOrder: "stroke",
-                        stroke: "rgba(0,0,0,.45)",   // HALO for readability
-                        strokeWidth: 3
                       }}>
                       {(() => {
                         const pad = 10;
