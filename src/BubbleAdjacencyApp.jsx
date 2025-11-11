@@ -3,15 +3,13 @@ import * as d3 from "d3";
 
 /**
  * Bubble Diagram Builder – Force-directed (React + D3)
- * v4.4 — Arrowhead-overlap fix
+ * v4.5 — White‑screen fix + Arrowhead overlap
  *
- * What changed vs your last file:
- * - Links still use a mask so strokes don't pass over bubbles.
- * - NEW overlay layer (drawn AFTER nodes) adds tiny line stubs that carry the
- *   markers (arrowheads, circles, etc.). These stubs sit on top of the bubbles,
- *   so arrowheads can overlap inside by `arrowOverlap` without being clipped.
- * - Keeps your Arrow Overlap slider behavior.
- * - Includes previously missing handlers/helpers to avoid white screen.
+ * Fixes:
+ * - Defines all previously missing handlers referenced in JSX
+ *   (renameNode, changeArea, setNodeFill/Stroke/etc., exportSVG/PNG/JSON,
+ *    save/open/import helpers). This prevents ReferenceError → white screen.
+ * - Keeps arrowhead overlap by drawing marker stubs after nodes.
  */
 
 // ---- Theme (UI chrome only; not the canvas background) ----------------------
@@ -63,7 +61,6 @@ function toNumber(v, fallback) {
 function norm(s){
   return String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
 }
-
 
 /** Clamp text size into safe range and coerce to number */
 function clampTextSize(v) {
@@ -195,24 +192,17 @@ function makeSpinForce(level /* 0..100 */) {
 
 // ----- Main App --------------------------------------------------------------
 
-// Mask that hides any link segments that enter a bubble
+// Mask that hides any link segments that enter a bubble (with slight reduction when overlapping)
 function LinkMask({ nodes, rOf, arrowOverlap }) {
-  // We still hide lines that enter bubbles, but shrink the mask slightly
-  // when overlap > 0 so we can reveal a tiny rim for visual consistency.
-  // (Overlay markers are what actually sit on top of bubbles.)
   return (
     <defs>
       <mask id="mask-links-hide-bubbles" maskUnits="userSpaceOnUse">
         <rect x="-10000" y="-10000" width="20000" height="20000" fill="white" />
-        {nodes.map((n) => (
-          <circle
-            key={n.id}
-            cx={n.x || 0}
-            cy={n.y || 0}
-            r={Math.max(1, rOf(n.area) - Math.min(arrowOverlap, rOf(n.area) * 0.9))}
-            fill="black"
-          />
-        ))}
+        {nodes.map((n) => {
+          const r = rOf(n.area);
+          const shrink = Math.min(arrowOverlap, r * 0.9);
+          return <circle key={n.id} cx={n.x || 0} cy={n.y || 0} r={Math.max(1, r - shrink)} fill="black" />;
+        })}
       </mask>
     </defs>
   );
@@ -238,10 +228,10 @@ export default function BubbleAdjacencyApp() {
   // Buffer between bubbles
   const [buffer, setBuffer] = useState(6);
 
-  // NEW: arrows can overlap into the circles — in pixels
-  const [arrowOverlap, setArrowOverlap] = useState(12); // default some overlap
+  // Arrowheads can overlap into the circles — in pixels
+  const [arrowOverlap, setArrowOverlap] = useState(12);
 
-  // NEW: rotation sensitivity (adds a light "spin" force)
+  // rotation sensitivity (adds a light "spin" force)
   const [rotationSensitivity, setRotationSensitivity] = useState(0); // 0..100
   const [showMeasurements, setShowMeasurements] = useState(true);
 
@@ -256,7 +246,7 @@ export default function BubbleAdjacencyApp() {
     try { localStorage.setItem(SCENES_KEY, JSON.stringify(scenes)); } catch {}
   }, [scenes]);
   const [updateAreasFromList, setUpdateAreasFromList] = useState(false);
-  const [updateMatchMode, setUpdateMatchMode] = useState("name"); // "name" | "index" // update areas too when applying list
+  const [updateMatchMode, setUpdateMatchMode] = useState("name"); // "name" | "index"
 
   // Edge style presets (necessary vs ideal)
   const [styles, setStyles] = useState({
@@ -285,9 +275,7 @@ export default function BubbleAdjacencyApp() {
   const svgRef = useRef(null);
   const simRef = useRef(null);
   const containerRef = useRef(null);
-  // File handle for JSON (File System Access API)
   const jsonHandleRef = useRef(null);
-
 
   // Zoom / Pan
   const zoomBehaviorRef = useRef(null);
@@ -306,6 +294,7 @@ export default function BubbleAdjacencyApp() {
     buffer,
     arrowOverlap,
     rotationSensitivity,
+    showMeasurements,
   });
   const pushHistory = () => { historyRef.current.push(snapshot()); futureRef.current = []; };
   function undo() {
@@ -316,6 +305,7 @@ export default function BubbleAdjacencyApp() {
     setBuffer(prev.buffer);
     setArrowOverlap(prev.arrowOverlap ?? 0);
     setRotationSensitivity(prev.rotationSensitivity ?? 0);
+    setShowMeasurements(!!prev.showMeasurements);
   }
   function redo() {
     if (!futureRef.current.length) return;
@@ -325,10 +315,10 @@ export default function BubbleAdjacencyApp() {
     setBuffer(next.buffer);
     setArrowOverlap(next.arrowOverlap ?? 0);
     setRotationSensitivity(next.rotationSensitivity ?? 0);
+    setShowMeasurements(!!next.showMeasurements);
   }
 
   // ---------------------------- Preset Persistence ---------------------------
-  // Load on mount
   useEffect(() => {
     const p = loadPresets();
     if (!p) return;
@@ -352,7 +342,6 @@ export default function BubbleAdjacencyApp() {
     if (p.liveBgCustom) setLiveBgCustom(p.liveBgCustom);
   }, []);
 
-  // Save whenever any preset changes
   useEffect(() => {
     const payload = {
       styles,
@@ -392,12 +381,11 @@ export default function BubbleAdjacencyApp() {
       .force("charge", d3.forceManyBody().strength(-80))
       .force("collide", d3.forceCollide().radius((d) => (d.r || BASE_R_MIN) + buffer))
       .force("center", d3.forceCenter(0, 0))
-      .force("spin", makeSpinForce(rotationSensitivity)); // NEW
+      .force("spin", makeSpinForce(rotationSensitivity));
     simRef.current = sim;
     return () => sim.stop();
   }, []);
 
-  // Re-apply spin force when sensitivity changes
   useEffect(() => {
     const sim = simRef.current;
     if (!sim) return;
@@ -467,76 +455,30 @@ export default function BubbleAdjacencyApp() {
     setLinkSource(null);
     setPhysics(true);
     setSelectedNodeId(null);
-    // Reset zoom to identity so fresh graph starts centered
     resetZoom();
   }
   
-function updateFromList() {
-  if (!nodes.length) return;
-  const parsed = parseList(rawList || "");
-  if (!parsed.length) return;
-  pushHistory();
+  function updateFromList() {
+    if (!nodes.length) return;
+    const parsed = parseList(rawList || "");
+    if (!parsed.length) return;
+    pushHistory();
 
-  if (updateMatchMode === "index") {
-    setNodes((prev) => prev.map((n, i) => {
-      if (i >= parsed.length) return n;
-      const src = parsed[i];
-      return {
-        ...n,
-        name: src.name,
-        ...(updateAreasFromList ? { area: Math.max(1, +src.area || n.area) } : {}),
-      };
-    }));
-    if (parsed.length > nodes.length) {
-      const extras = parsed.slice(nodes.length).map((x) => ({
-        id: Math.random().toString(36).slice(2, 9),
-        name: x.name,
-        area: Math.max(1, +x.area || 20),
-        x: (Math.random() - 0.5) * 40,
-        y: (Math.random() - 0.5) * 40,
-        fill: bulkFillTransparent ? "none" : bulkFill,
-        stroke: bulkStroke,
-        strokeWidth: bulkStrokeWidth,
-        textFont: bulkTextFont,
-        textColor: bulkTextColor,
-        textSize: clampTextSize(bulkTextSize),
-      }));
-      setNodes((prev) => [...prev, ...extras]);
-    }
-    return;
-  }
-
-  // default: match by NAME (safer after JSON imports that reorder nodes)
-  setNodes((prev) => {
-    const buckets = new Map();
-    prev.forEach((n, idx) => {
-      const k = norm(n.name);
-      const arr = buckets.get(k) || [];
-      arr.push(idx);
-      buckets.set(k, arr);
-    });
-
-    const updated = [...prev];
-    const used = new Set();
-    const extras = [];
-
-    parsed.forEach((src) => {
-      const key = norm(src.name);
-      const arr = buckets.get(key);
-      let idx = -1;
-      if (arr && arr.length) idx = arr.shift();
-      if (idx >= 0 && !used.has(idx)) {
-        updated[idx] = {
-          ...updated[idx],
+    if (updateMatchMode === "index") {
+      setNodes((prev) => prev.map((n, i) => {
+        if (i >= parsed.length) return n;
+        const src = parsed[i];
+        return {
+          ...n,
           name: src.name,
-          ...(updateAreasFromList ? { area: Math.max(1, +src.area || updated[idx].area) } : {}),
+          ...(updateAreasFromList ? { area: Math.max(1, +src.area || n.area) } : {}),
         };
-        used.add(idx);
-      } else {
-        extras.push({
-          id: Math.random().toString(36).slice(2, 9),
-          name: src.name,
-          area: Math.max(1, +src.area || 20),
+      }));
+      if (parsed.length > nodes.length) {
+        const extras = parsed.slice(nodes.length).map((x) => ({
+          id: uid(),
+          name: x.name,
+          area: Math.max(1, +x.area || 20),
           x: (Math.random() - 0.5) * 40,
           y: (Math.random() - 0.5) * 40,
           fill: bulkFillTransparent ? "none" : bulkFill,
@@ -545,14 +487,57 @@ function updateFromList() {
           textFont: bulkTextFont,
           textColor: bulkTextColor,
           textSize: clampTextSize(bulkTextSize),
-        });
+        }));
+        setNodes((prev) => [...prev, ...extras]);
       }
+      return;
+    }
+
+    // default: match by NAME
+    setNodes((prev) => {
+      const buckets = new Map();
+      prev.forEach((n, idx) => {
+        const k = norm(n.name);
+        const arr = buckets.get(k) || [];
+        arr.push(idx);
+        buckets.set(k, arr);
+      });
+
+      const updated = [...prev];
+      const used = new Set();
+      const extras = [];
+
+      parsed.forEach((src) => {
+        const key = norm(src.name);
+        const arr = buckets.get(key);
+        let idx = -1;
+        if (arr && arr.length) idx = arr.shift();
+        if (idx >= 0 && !used.has(idx)) {
+          updated[idx] = {
+            ...updated[idx],
+            name: src.name,
+            ...(updateAreasFromList ? { area: Math.max(1, +src.area || updated[idx].area) } : {}),
+          };
+          used.add(idx);
+        } else {
+          extras.push({
+            id: uid(),
+            name: src.name,
+            area: Math.max(1, +src.area || 20),
+            x: (Math.random() - 0.5) * 40,
+            y: (Math.random() - 0.5) * 40,
+            fill: bulkFillTransparent ? "none" : bulkFill,
+            stroke: bulkStroke,
+            strokeWidth: bulkStrokeWidth,
+            textFont: bulkTextFont,
+            textColor: bulkTextColor,
+            textSize: clampTextSize(bulkTextSize),
+          });
+        }
+      });
+      return extras.length ? [...updated, ...extras] : updated;
     });
-    return extras.length ? [...updated, ...extras] : updated;
-  });
-}
-
-
+  }
 
   function clearAll() {
     pushHistory();
@@ -591,6 +576,45 @@ function updateFromList() {
     })));
   }
 
+  // ---------------------------- Node mutators (FIX) ---------------------------
+  function renameNode(id, name) {
+    const v = String(name || "").trim();
+    pushHistory();
+    setNodes(prev => prev.map(n => n.id === id ? { ...n, name: v || n.name } : n));
+  }
+  function changeArea(id, val) {
+    const a = Math.max(1, toNumber(val, NaN) || 0);
+    pushHistory();
+    setNodes(prev => prev.map(n => n.id === id ? { ...n, area: a } : n));
+    simRef.current?.alpha(0.4).restart();
+  }
+  function setNodeFill(id, fill) {
+    pushHistory();
+    setNodes(prev => prev.map(n => n.id === id ? { ...n, fill } : n));
+  }
+  function setNodeStroke(id, stroke) {
+    pushHistory();
+    setNodes(prev => prev.map(n => n.id === id ? { ...n, stroke } : n));
+  }
+  function setNodeStrokeW(id, w) {
+    const v = Math.max(1, Math.min(12, toNumber(w, 2)));
+    pushHistory();
+    setNodes(prev => prev.map(n => n.id === id ? { ...n, strokeWidth: v } : n));
+  }
+  function setNodeTextFont(id, font) {
+    pushHistory();
+    setNodes(prev => prev.map(n => n.id === id ? { ...n, textFont: font } : n));
+  }
+  function setNodeTextColor(id, color) {
+    pushHistory();
+    setNodes(prev => prev.map(n => n.id === id ? { ...n, textColor: color } : n));
+  }
+  function setNodeTextSize(id, v) {
+    const size = clampTextSize(v);
+    pushHistory();
+    setNodes(prev => prev.map(n => n.id === id ? { ...n, textSize: size } : n));
+  }
+
   // ---------------------------- Dragging -------------------------------------
   const draggingRef = useRef(null);
   const isDraggingRef = useRef(false);
@@ -600,8 +624,8 @@ function updateFromList() {
     setSelectedNodeId(node.id);
     draggingRef.current = node.id;
     dragStartSnapshotRef.current = snapshot();
-        isDraggingRef.current = true;
-try { e.currentTarget.setPointerCapture?.(e.pointerId); } catch {}
+    isDraggingRef.current = true;
+    try { e.currentTarget.setPointerCapture?.(e.pointerId); } catch {}
     simRef.current?.alphaTarget(0.3);
   }
   function svgToLocalPoint(svgEl, clientX, clientY) {
@@ -616,95 +640,280 @@ try { e.currentTarget.setPointerCapture?.(e.pointerId); } catch {}
     const p = new DOMPoint(loc.x, loc.y).matrixTransform(innerCTM.inverse());
     return { x: p.x, y: p.y };
   }
-  
-function onPointerMove(e) {
-  const id = draggingRef.current; if (!id) return;
-  const svg = svgRef.current; const { x, y } = svgToLocalPoint(svg, e.clientX, e.clientY);
-  // Immediate visual update
-  setNodes((prev) => prev.map((n) => (n.id === id ? { ...n, x, y, fx: x, fy: y } : n)));
-  // Keep the simulation node in sync so physics won't pull it away
-  try {
-    const sim = simRef.current;
-    if (sim && sim.nodes) {
-      const arr = sim.nodes();
-      for (const n of arr) {
-        if (n.id == id) { n.x = x; n.y = y; n.fx = x; n.fy = y; n.vx = 0; n.vy = 0; break; }
+  function onPointerMove(e) {
+    const id = draggingRef.current; if (!id) return;
+    const svg = svgRef.current; const { x, y } = svgToLocalPoint(svg, e.clientX, e.clientY);
+    setNodes((prev) => prev.map((n) => (n.id === id ? { ...n, x, y, fx: x, fy: y } : n)));
+    try {
+      const sim = simRef.current;
+      if (sim && sim.nodes) {
+        const arr = sim.nodes();
+        for (const n of arr) {
+          if (n.id === id) { n.x = x; n.y = y; n.fx = x; n.fy = y; n.vx = 0; n.vy = 0; break; }
+        }
+      }
+    } catch {}
+  }
+  function onPointerUp(e){
+    try { e.currentTarget.releasePointerCapture?.(e.pointerId); } catch {}
+    const id = draggingRef.current;
+    if (id){
+      setNodes(prev => prev.map(n => n.id === id ? ({...n, fx: undefined, fy: undefined}) : n));
+      draggingRef.current = null;
+      isDraggingRef.current = false;
+      simRef.current?.alphaTarget(0);
+    }
+  }
+
+  function zeroVelocities() {
+    try {
+      const sim = simRef.current;
+      if (!sim) return;
+      const arr = sim.nodes ? sim.nodes() : [];
+      if (Array.isArray(arr)) {
+        for (const n of arr) { n.vx = 0; n.vy = 0; }
+      }
+    } catch {}
+  }
+
+  // Scenes helpers
+  function captureScenePayload(){
+    const positions = {};
+    nodes.forEach(n => positions[n.id] = { x: n.x || 0, y: n.y || 0 });
+    return { positions, zoom: { x: zoomTransform.x, y: zoomTransform.y, k: zoomTransform.k } };
+  }
+  function addScene(name) {
+    const nm = String(name || "").trim() || `Scene ${scenes.length + 1}`;
+    const payload = captureScenePayload();
+    const s = { id: uid(), name: nm, ...payload };
+    setScenes(prev => [...prev, s]);
+    setActiveSceneId(s.id);
+  }
+  function applyScene(sceneId) {
+    const s = scenes.find(x => x.id === sceneId);
+    if (!s) return;
+    const { positions, zoom } = s;
+    setNodes(prev => prev.map(n => {
+      const p = positions[n.id];
+      return p ? { ...n, x: p.x, y: p.y, fx: undefined, fy: undefined } : n;
+    }));
+    try {
+      const svg = d3.select(svgRef.current);
+      const zoomer = zoomBehaviorRef.current;
+      if (svg && zoomer && zoom) {
+        svg.transition().duration(250)
+           .call(zoomer.transform, d3.zoomIdentity.translate(zoom.x, zoom.y).scale(zoom.k || 1));
+      }
+    } catch {}
+    zeroVelocities();
+    simRef.current?.alpha(0.3).restart();
+  }
+  function updateScene(sceneId) {
+    const idx = scenes.findIndex(x => x.id === sceneId);
+    if (idx === -1) return;
+    const payload = captureScenePayload();
+    setScenes(prev => {
+      const next = [...prev];
+      next[idx] = { ...next[idx], ...payload };
+      return next;
+    });
+  }
+  function deleteScene(sceneId) {
+    setScenes(prev => prev.filter(x => x.id !== sceneId));
+    if (activeSceneId === sceneId) setActiveSceneId(null);
+  }
+
+  // ---------------------------- Export & JSON I/O (FIX) ----------------------
+  function getExportBg() {
+    if (exportBgMode === "transparent") return null;
+    if (exportBgMode === "white") return "#ffffff";
+    return exportBgCustom || "#ffffff";
+  }
+
+  function buildExportPayload() {
+    return {
+      nodes, links, styles,
+      bulk: {
+        bulkFill,
+        bulkFillTransparent,
+        bulkStroke,
+        bulkStrokeWidth,
+        bulkTextFont,
+        bulkTextColor,
+        bulkTextSize: clampTextSize(bulkTextSize),
+      },
+      buffer,
+      arrowOverlap,
+      rotationSensitivity,
+      showMeasurements,
+      exportBgMode, exportBgCustom,
+      liveBgMode, liveBgCustom,
+    };
+  }
+
+  function exportSVG() {
+    const orig = svgRef.current; if (!orig) return;
+    const clone = orig.cloneNode(true);
+    const vb = orig.getAttribute("viewBox") || "-600 -350 1200 700";
+    clone.setAttribute("viewBox", vb);
+    clone.querySelectorAll('[data-ignore-export]').forEach((el) => el.remove());
+    clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+    clone.setAttribute("xmlns:xlink", "http://www.w3.org/1999/xlink");
+    clone.setAttribute("width", "1200");
+    clone.setAttribute("height", "700");
+    const bg = getExportBg();
+    if (bg) {
+      const vbObj = clone.viewBox?.baseVal || { x: -600, y: -350, width: 1200, height: 700 };
+      const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      rect.setAttribute("x", vbObj.x);
+      rect.setAttribute("y", vbObj.y);
+      rect.setAttribute("width", vbObj.width);
+      rect.setAttribute("height", vbObj.height);
+      rect.setAttribute("fill", bg);
+      clone.insertBefore(rect, clone.firstChild);
+    }
+    const svgStr = new XMLSerializer().serializeToString(clone);
+    const blob = new Blob([svgStr], { type: "image/svg+xml;charset=utf-8" });
+    const url = URL.createObjectURL(blob); download(url, `bubble-diagram-${Date.now()}.svg`);
+  }
+
+  function exportPNG() {
+    const orig = svgRef.current; if (!orig) return;
+    const clone = orig.cloneNode(true);
+    clone.querySelectorAll('[data-ignore-export]').forEach((el) => el.remove());
+    const svgStr = new XMLSerializer().serializeToString(clone);
+    const img = new Image();
+    const svg64 = btoa(unescape(encodeURIComponent(svgStr)));
+    img.onload = () => {
+      const canvas = document.createElement("canvas"); canvas.width = 2200; canvas.height = 1400;
+      const ctx = canvas.getContext("2d");
+      const bg = getExportBg();
+      if (bg) { ctx.fillStyle = bg; ctx.fillRect(0, 0, canvas.width, canvas.height); }
+      else { ctx.clearRect(0, 0, canvas.width, canvas.height); }
+      const scale = Math.min(canvas.width / 1200, canvas.height / 700);
+      const dx = (canvas.width - 1200 * scale) / 2; const dy = (canvas.height - 700 * scale) / 2;
+      ctx.setTransform(scale, 0, 0, scale, dx, dy);
+      ctx.drawImage(img, 0, 0);
+      canvas.toBlob((blob) => { if (!blob) return; const url = URL.createObjectURL(blob); download(url, `bubble-diagram-${Date.now()}.png`); });
+    };
+    img.onerror = () => alert("PNG export failed. Try SVG export if issue persists.");
+    img.src = `data:image/svg+xml;base64,${svg64}`;
+  }
+
+  async function saveJSON() {
+    if (window.showSaveFilePicker && jsonHandleRef.current) {
+      try {
+        const handle = jsonHandleRef.current;
+        const writable = await handle.createWritable();
+        await writable.write(JSON.stringify(buildExportPayload(), null, 2));
+        await writable.close();
+        return;
+      } catch (err) {
+        console.warn("Save JSON failed, falling back to Save As…", err);
       }
     }
-  } catch {}
-}
-
-// Release drag (prevents stuck drag + white screens from missing handler)
-function onPointerUp(e){
-  try { e.currentTarget.releasePointerCapture?.(e.pointerId); } catch {}
-  const id = draggingRef.current;
-  if (id){
-    setNodes(prev => prev.map(n => n.id === id ? ({...n, fx: undefined, fy: undefined}) : n));
-    draggingRef.current = null;
-    isDraggingRef.current = false;
-    simRef.current?.alphaTarget(0);
+    return saveJSONAs();
   }
-}
-
-function zeroVelocities() {
-  try {
-    const sim = simRef.current;
-    if (!sim) return;
-    const arr = sim.nodes ? sim.nodes() : [];
-    if (Array.isArray(arr)) {
-      for (const n of arr) { n.vx = 0; n.vy = 0; }
+  async function saveJSONAs() {
+    if (window.showSaveFilePicker) {
+      try {
+        const handle = await window.showSaveFilePicker({
+          suggestedName: "bubble-diagram.json",
+          types: [{ description: "JSON files", accept: { "application/json": [".json"] } }],
+        });
+        jsonHandleRef.current = handle;
+        const writable = await handle.createWritable();
+        await writable.write(JSON.stringify(buildExportPayload(), null, 2));
+        await writable.close();
+        return;
+      } catch (err) {
+        console.warn("Save As cancelled or failed; using fallback.", err);
+      }
     }
-  } catch {}
-}
+    const name = (typeof window !== "undefined" ? (window.prompt("File name", "bubble-diagram.json") || "bubble-diagram.json") : "bubble-diagram.json");
+    const blob = new Blob([JSON.stringify(buildExportPayload(), null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob); download(url, name);
+  }
 
-// Scenes helpers (snapshot zoom + positions)
-function captureScenePayload(){
-  const positions = {};
-  nodes.forEach(n => positions[n.id] = { x: n.x || 0, y: n.y || 0 });
-  return { positions, zoom: { x: zoomTransform.x, y: zoomTransform.y, k: zoomTransform.k } };
-}
-function addScene(name) {
-  const nm = String(name || "").trim() || `Scene ${scenes.length + 1}`;
-  const payload = captureScenePayload();
-  const s = { id: Math.random().toString(36).slice(2,9), name: nm, ...payload };
-  setScenes(prev => [...prev, s]);
-  setActiveSceneId(s.id);
-}
-function applyScene(sceneId) {
-  const s = scenes.find(x => x.id === sceneId);
-  if (!s) return;
-  const { positions, zoom } = s;
-  setNodes(prev => prev.map(n => {
-    const p = positions[n.id];
-    return p ? { ...n, x: p.x, y: p.y, fx: undefined, fy: undefined } : n;
-  }));
-  try {
-    const svg = d3.select(svgRef.current);
-    const zoomer = zoomBehaviorRef.current;
-    if (svg && zoomer && zoom) {
-      svg.transition().duration(250)
-         .call(zoomer.transform, d3.zoomIdentity.translate(zoom.x, zoom.y).scale(zoom.k || 1));
+  function loadFromData(d) {
+    if (Array.isArray(d.nodes)) {
+      const normalized = d.nodes.map((n) => ({
+        ...n,
+        id: n.id || uid(),
+        name: String(n.name ?? "Unnamed"),
+        area: Math.max(1, toNumber(n.area, 20)),
+        textSize: clampTextSize(n.textSize ?? bulkTextSize),
+        strokeWidth: Math.max(1, Math.min(12, toNumber(n.strokeWidth, bulkStrokeWidth))),
+      }));
+      setNodes(normalized);
     }
-  } catch {}
-  zeroVelocities();
-  simRef.current?.alpha(0.3).restart();
-}
-function updateScene(sceneId) {
-  const idx = scenes.findIndex(x => x.id === sceneId);
-  if (idx === -1) return;
-  const payload = captureScenePayload();
-  setScenes(prev => {
-    const next = [...prev];
-    next[idx] = { ...next[idx], ...payload };
-    return next;
-  });
-}
-function deleteScene(sceneId) {
-  setScenes(prev => prev.filter(x => x.id !== sceneId));
-  if (activeSceneId === sceneId) setActiveSceneId(null);
-}
+    if (Array.isArray(d.links)) setLinks(d.links.filter((l) => l.source && l.target));
+    if (d.styles) setStyles((s) => ({ ...s, ...d.styles }));
+    if (d.bulk) {
+      const b = d.bulk;
+      if (typeof b.bulkFill === "string") setBulkFill(b.bulkFill);
+      if (typeof b.bulkFillTransparent === "boolean") setBulkFillTransparent(b.bulkFillTransparent);
+      if (typeof b.bulkStroke === "string") setBulkStroke(b.bulkStroke);
+      if (typeof b.bulkStrokeWidth === "number") setBulkStrokeWidth(Math.max(1, Math.min(12, b.bulkStrokeWidth)));
+      if (typeof b.bulkTextFont === "string") setBulkTextFont(b.bulkTextFont);
+      if (typeof b.bulkTextColor === "string") setBulkTextColor(b.bulkTextColor);
+      if (b.bulkTextSize != null) setBulkTextSize(clampTextSize(b.bulkTextSize));
+    }
+    if (typeof d.buffer === "number") setBuffer(d.buffer);
+    if (typeof d.arrowOverlap === "number") setArrowOverlap(d.arrowOverlap);
+    if (typeof d.rotationSensitivity === "number") setRotationSensitivity(d.rotationSensitivity);
+    if (typeof d.showMeasurements === "boolean") setShowMeasurements(d.showMeasurements);
+    if (d.exportBgMode) setExportBgMode(d.exportBgMode);
+    if (d.exportBgCustom) setExportBgCustom(d.exportBgCustom);
+    if (d.liveBgMode) setLiveBgMode(d.liveBgMode);
+    if (d.liveBgCustom) setLiveBgCustom(d.liveBgCustom);
+  }
 
-// ---------------------------- Zoom / Pan / Fit -----------------------------
+  async function openJSON() {
+    if (window.showOpenFilePicker) {
+      try {
+        const [handle] = await window.showOpenFilePicker({
+          multiple: false,
+          types: [{ description: "JSON files", accept: { "application/json": [".json"] } }],
+        });
+        if (!handle) return;
+        const file = await handle.getFile();
+        const text = await file.text();
+        jsonHandleRef.current = handle;
+        const data = JSON.parse(text);
+        loadFromData(data);
+        return;
+      } catch (err) {
+        console.warn("Open JSON cancelled or failed.", err);
+      }
+    }
+    const input = document.createElement("input");
+    input.type = "file"; input.accept = "application/json";
+    input.onchange = (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      jsonHandleRef.current = null;
+      const r = new FileReader();
+      r.onload = () => { try { loadFromData(JSON.parse(String(r.result || ""))); } catch { alert("Invalid JSON file"); } };
+      r.readAsText(file);
+    };
+    input.click();
+  }
+
+  function importJSON(file) {
+    const r = new FileReader();
+    r.onload = () => {
+      try {
+        const d = JSON.parse(r.result);
+        loadFromData(d);
+      } catch {
+        alert("Invalid JSON file");
+      }
+    };
+    r.readAsText(file);
+  }
+
+  // ---------------------------- Zoom / Pan / Fit -----------------------------
   useEffect(() => {
     const svg = d3.select(svgRef.current);
     const zoom = d3.zoom()
@@ -714,8 +923,7 @@ function deleteScene(sceneId) {
       });
     zoomBehaviorRef.current = zoom;
     svg.call(zoom);
-    // Double-click to reset zoom
-    svg.on("dblclick.zoom", null); // disable default dblclick zoom
+    svg.on("dblclick.zoom", null);
     svg.on("dblclick", () => resetZoom());
     return () => svg.on(".zoom", null);
   }, []);
@@ -737,7 +945,6 @@ function deleteScene(sceneId) {
   }
   function fitToView() {
     if (!nodes.length) return resetZoom();
-    // Compute bounds from node centers + radii
     const r = (n) => rOf(n.area);
     const minX = d3.min(nodes, (n) => (n.x || 0) - r(n)) ?? -600;
     const maxX = d3.max(nodes, (n) => (n.x || 0) + r(n)) ?? 600;
@@ -789,7 +996,6 @@ function deleteScene(sceneId) {
     return liveBgCustom || THEME.surface;
   })();
 
-  // keep for any link-level interactions in the future
   const lastClickedLinkRef = useRef(null);
 
   return (
@@ -920,7 +1126,7 @@ function deleteScene(sceneId) {
               <span className="opacity-70">px</span>
             </div>
 
-            {/* NEW: Arrow Overlap */}
+            {/* Arrow Overlap */}
             <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
               <span className="opacity-70">Arrow overlap:</span>
               <input type="range" min={0} max={60} step={1} value={arrowOverlap} onChange={(e) => setArrowOverlap(+e.target.value)} />
@@ -928,13 +1134,14 @@ function deleteScene(sceneId) {
               <span className="opacity-70">px</span>
             </div>
 
-            {/* NEW: Rotation Sensitivity */}
+            {/* Rotation Sensitivity */}
             <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
               <span className="opacity-70">Rotation sensitivity:</span>
               <input type="range" min={0} max={100} step={1} value={rotationSensitivity} onChange={(e) => setRotationSensitivity(+e.target.value)} />
               <input type="number" min={0} max={100} value={rotationSensitivity} className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" onChange={(e) => setRotationSensitivity(Math.max(0, Math.min(100, +e.target.value || 0)))} />
               <span className="opacity-70">%</span>
             </div>
+
             {/* Measurements toggle */}
             <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
               <label className="flex items-center gap-1">
@@ -943,29 +1150,27 @@ function deleteScene(sceneId) {
               </label>
             </div>
 
-
             {/* Graph actions */}
             <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={() => setPhysics((p) => !p)}>{physics ? "Physics: ON" : "Physics: OFF"}</button>
             <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={() => setNodes([...nodes])}>Re-Layout</button>
 
-            
-{/* Scenes */}
-<div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-2 py-2 text-xs">
-  <span className="opacity-70">Scene:</span>
-  <select className="bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
-          value={activeSceneId || ""}
-          onChange={(e) => setActiveSceneId(e.target.value || null)}>
-    <option value="">(none)</option>
-    {scenes.map((s) => (<option key={s.id} value={s.id}>{s.name}</option>))}
-  </select>
-  <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" onClick={() => {
-    const nm = window.prompt("New scene name", `Scene ${scenes.length + 1}`);
-    if (nm != null) addScene(nm);
-  }}>Add</button>
-  <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" disabled={!activeSceneId} onClick={() => activeSceneId && applyScene(activeSceneId)}>Go</button>
-  <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" disabled={!activeSceneId} onClick={() => activeSceneId && updateScene(activeSceneId)}>Update</button>
-  <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" disabled={!activeSceneId} onClick={() => activeSceneId && deleteScene(activeSceneId)}>Delete</button>
-</div>
+            {/* Scenes */}
+            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-2 py-2 text-xs">
+              <span className="opacity-70">Scene:</span>
+              <select className="bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
+                      value={activeSceneId || ""}
+                      onChange={(e) => setActiveSceneId(e.target.value || null)}>
+                <option value="">(none)</option>
+                {scenes.map((s) => (<option key={s.id} value={s.id}>{s.name}</option>))}
+              </select>
+              <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" onClick={() => {
+                const nm = window.prompt("New scene name", `Scene ${scenes.length + 1}`);
+                if (nm != null) addScene(nm);
+              }}>Add</button>
+              <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" disabled={!activeSceneId} onClick={() => activeSceneId && applyScene(activeSceneId)}>Go</button>
+              <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" disabled={!activeSceneId} onClick={() => activeSceneId && updateScene(activeSceneId)}>Update</button>
+              <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" disabled={!activeSceneId} onClick={() => activeSceneId && deleteScene(activeSceneId)}>Delete</button>
+            </div>
 
             {/* Zoom controls */}
             <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-2 py-2 text-xs">
@@ -1087,7 +1292,7 @@ VOD Review / Theater, 60`} value={rawList} onChange={(e) => setRawList(e.target.
                 const dx = (t.x - s.x), dy = (t.y - s.y); const dist = Math.hypot(dx, dy) || 1; const nx = dx / dist, ny = dy / dist;
                 const rs = rOf(s.area), rt = rOf(t.area);
 
-                // Base: keep main line OUTSIDE bubbles (no inset), mask handles any residuals
+                // Keep main line outside the fill (mask handles any residuals)
                 const x1 = (s.x || 0) + nx * (rs + 2);
                 const y1 = (s.y || 0) + ny * (rs + 2);
                 const x2 = (t.x || 0) - nx * (rt + 6);
@@ -1162,23 +1367,18 @@ VOD Review / Theater, 60`} value={rawList} onChange={(e) => setRawList(e.target.
                   const rs = rOf(s.area), rt = rOf(t.area);
                   const st = styles[l.type];
 
-                  // Insets control how far *inside* the bubble the arrowheads sit
                   const insetS = Math.max(0, Math.min(arrowOverlap, rs - 2));
                   const insetT = Math.max(0, Math.min(arrowOverlap, rt - 6));
 
-                  // Start-head position (inside source)
                   const sx = (s.x || 0) + nx * (rs + 2 - insetS);
                   const sy = (s.y || 0) + ny * (rs + 2 - insetS);
-                  // Target-head position (inside target)
                   const tx = (t.x || 0) - nx * (rt + 6 - insetT);
                   const ty = (t.y || 0) - ny * (rt + 6 - insetT);
 
-                  // Tiny stub length so the marker orients properly
                   const eps = 1e-3;
 
                   return (
                     <g key={`mk-${l.id}`}>
-                      {/* start marker stub */}
                       {styles[l.type].headStart !== "none" && (
                         <line
                           x1={sx + nx * eps} y1={sy + ny * eps}
@@ -1188,7 +1388,6 @@ VOD Review / Theater, 60`} value={rawList} onChange={(e) => setRawList(e.target.
                           markerStart={markerUrl(l.type, "start")}
                         />
                       )}
-                      {/* end marker stub */}
                       {styles[l.type].headEnd !== "none" && (
                         <line
                           x1={tx} y1={ty}
@@ -1221,7 +1420,7 @@ VOD Review / Theater, 60`} value={rawList} onChange={(e) => setRawList(e.target.
           </summary>
           <div className="mt-3 text-sm leading-6 text-[#d8d8e2]">
             <p><strong>Authored by:</strong> Mark Jay O. Gooc — Architecture student, Batangas State University – TNEU (ARC‑5108)</p>
-            <p className="opacity-80">Bubble Diagram Builder (React + D3). Version 4.4 — arrowhead overlap fix, preset persistence, live background controls, zoom/pan, fullscreen, and improved exports.</p>
+            <p className="opacity-80">Bubble Diagram Builder (React + D3). Version 4.5 — white‑screen fix + arrowhead overlap, preset persistence, live background controls, zoom/pan, fullscreen, and improved exports.</p>
           </div>
         </details>
       </div>
@@ -1308,7 +1507,6 @@ function wrapToWidth(label, fontFamily, fontPx, maxWidth, maxLines = 5) {
   for (let i = 0; i < words.length; i++) {
     const w = words[i];
     if (!cur) {
-      // If the word alone exceeds width, hard-wrap by chars
       if (measureWidth(w, fontFamily, fontPx) > maxWidth) {
         let buf = "";
         for (const ch of w) {
@@ -1331,8 +1529,6 @@ function wrapToWidth(label, fontFamily, fontPx, maxWidth, maxLines = 5) {
     if (lines.length >= maxLines) break;
   }
   if (lines.length < maxLines && cur) pushLine(cur);
-
-  // Ellipsize if too many words to fit
   if (lines.length > maxLines) {
     return lines.slice(0, maxLines - 1).concat([lines[maxLines - 1] + "…"]);
   }
