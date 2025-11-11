@@ -1,15 +1,18 @@
+
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as d3 from "d3";
 
 /**
  * Bubble Diagram Builder – Force-directed (React + D3)
- * v4.5 — White‑screen fix + Arrowhead overlap
+ * v4.3 — Arrow overlap + Rotation sensitivity + Rounded color pickers
  *
- * Fixes:
- * - Defines all previously missing handlers referenced in JSX
- *   (renameNode, changeArea, setNodeFill/Stroke/etc., exportSVG/PNG/JSON,
- *    save/open/import helpers). This prevents ReferenceError → white screen.
- * - Keeps arrowhead overlap by drawing marker stubs after nodes.
+ * What’s new vs your uploaded file:
+ *  • Arrow overlap slider: lets link lines/arrowheads extend inside the bubbles.
+ *  • Rotation sensitivity slider: adds a gentle tangential “spin” force so bubbles orbit/settle based on sensitivity.
+ *  • Color inputs styled as smooth rounded pills (no sharp corners).
+ *  • Presets persist arrowOverlap and rotationSensitivity along with the rest.
+ *
+ * Drop this into your Vite React app (e.g., src/BubbleAdjacencyApp.jsx) and render it.
  */
 
 // ---- Theme (UI chrome only; not the canvas background) ----------------------
@@ -61,6 +64,7 @@ function toNumber(v, fallback) {
 function norm(s){
   return String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
 }
+
 
 /** Clamp text size into safe range and coerce to number */
 function clampTextSize(v) {
@@ -191,25 +195,7 @@ function makeSpinForce(level /* 0..100 */) {
 }
 
 // ----- Main App --------------------------------------------------------------
-
-// Mask that hides any link segments that enter a bubble (with slight reduction when overlapping)
-function LinkMask({ nodes, rOf, arrowOverlap }) {
-  return (
-    <defs>
-      <mask id="mask-links-hide-bubbles" maskUnits="userSpaceOnUse">
-        <rect x="-10000" y="-10000" width="20000" height="20000" fill="white" />
-        {nodes.map((n) => {
-          const r = rOf(n.area);
-          const shrink = Math.min(arrowOverlap, r * 0.9);
-          return <circle key={n.id} cx={n.x || 0} cy={n.y || 0} r={Math.max(1, r - shrink)} fill="black" />;
-        })}
-      </mask>
-    </defs>
-  );
-}
-
 export default function BubbleAdjacencyApp() {
-
   // Graph data
   const [nodes, setNodes] = useState([]);
   const [links, setLinks] = useState([]);
@@ -228,25 +214,25 @@ export default function BubbleAdjacencyApp() {
   // Buffer between bubbles
   const [buffer, setBuffer] = useState(6);
 
-  // Arrowheads can overlap into the circles — in pixels
-  const [arrowOverlap, setArrowOverlap] = useState(12);
+  // NEW: arrows can overlap into the circles — in pixels
+  const [arrowOverlap, setArrowOverlap] = useState(0); // 0..40+
 
-  // rotation sensitivity (adds a light "spin" force)
+  // NEW: rotation sensitivity (adds a light "spin" force)
   const [rotationSensitivity, setRotationSensitivity] = useState(0); // 0..100
   const [showMeasurements, setShowMeasurements] = useState(true);
 
-  // --- Scenes (positions + zoom) ---
-  const SCENES_KEY = "bubbleScenes:v1";
-  const [scenes, setScenes] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(SCENES_KEY) || "[]"); }
-    catch { return []; }
-  });
-  const [activeSceneId, setActiveSceneId] = useState(null);
-  useEffect(() => {
-    try { localStorage.setItem(SCENES_KEY, JSON.stringify(scenes)); } catch {}
-  }, [scenes]);
+// --- Scenes (positions + zoom) ---
+const SCENES_KEY = "bubbleScenes:v1";
+const [scenes, setScenes] = useState(() => {
+  try { return JSON.parse(localStorage.getItem(SCENES_KEY) || "[]"); }
+  catch { return []; }
+});
+const [activeSceneId, setActiveSceneId] = useState(null);
+useEffect(() => {
+  try { localStorage.setItem(SCENES_KEY, JSON.stringify(scenes)); } catch {}
+}, [scenes]);
   const [updateAreasFromList, setUpdateAreasFromList] = useState(false);
-  const [updateMatchMode, setUpdateMatchMode] = useState("name"); // "name" | "index"
+  const [updateMatchMode, setUpdateMatchMode] = useState("name"); // "name" | "index" // update areas too when applying list
 
   // Edge style presets (necessary vs ideal)
   const [styles, setStyles] = useState({
@@ -275,7 +261,9 @@ export default function BubbleAdjacencyApp() {
   const svgRef = useRef(null);
   const simRef = useRef(null);
   const containerRef = useRef(null);
+  // File handle for JSON (File System Access API)
   const jsonHandleRef = useRef(null);
+
 
   // Zoom / Pan
   const zoomBehaviorRef = useRef(null);
@@ -294,7 +282,6 @@ export default function BubbleAdjacencyApp() {
     buffer,
     arrowOverlap,
     rotationSensitivity,
-    showMeasurements,
   });
   const pushHistory = () => { historyRef.current.push(snapshot()); futureRef.current = []; };
   function undo() {
@@ -305,7 +292,6 @@ export default function BubbleAdjacencyApp() {
     setBuffer(prev.buffer);
     setArrowOverlap(prev.arrowOverlap ?? 0);
     setRotationSensitivity(prev.rotationSensitivity ?? 0);
-    setShowMeasurements(!!prev.showMeasurements);
   }
   function redo() {
     if (!futureRef.current.length) return;
@@ -315,10 +301,10 @@ export default function BubbleAdjacencyApp() {
     setBuffer(next.buffer);
     setArrowOverlap(next.arrowOverlap ?? 0);
     setRotationSensitivity(next.rotationSensitivity ?? 0);
-    setShowMeasurements(!!next.showMeasurements);
   }
 
   // ---------------------------- Preset Persistence ---------------------------
+  // Load on mount
   useEffect(() => {
     const p = loadPresets();
     if (!p) return;
@@ -342,6 +328,7 @@ export default function BubbleAdjacencyApp() {
     if (p.liveBgCustom) setLiveBgCustom(p.liveBgCustom);
   }, []);
 
+  // Save whenever any preset changes
   useEffect(() => {
     const payload = {
       styles,
@@ -368,8 +355,7 @@ export default function BubbleAdjacencyApp() {
     bulkFill, bulkFillTransparent, bulkStroke, bulkStrokeWidth,
     bulkTextFont, bulkTextColor, bulkTextSize,
     exportBgMode, exportBgCustom,
-    liveBgMode, liveBgCustom,
-    scenes, activeSceneId,
+    liveBgMode, liveBgCustom
   ]);
 
   // ---------------------------- D3 Force Simulation --------------------------
@@ -381,11 +367,12 @@ export default function BubbleAdjacencyApp() {
       .force("charge", d3.forceManyBody().strength(-80))
       .force("collide", d3.forceCollide().radius((d) => (d.r || BASE_R_MIN) + buffer))
       .force("center", d3.forceCenter(0, 0))
-      .force("spin", makeSpinForce(rotationSensitivity));
+      .force("spin", makeSpinForce(rotationSensitivity)); // NEW
     simRef.current = sim;
     return () => sim.stop();
   }, []);
 
+  // Re-apply spin force when sensitivity changes
   useEffect(() => {
     const sim = simRef.current;
     if (!sim) return;
@@ -418,7 +405,6 @@ export default function BubbleAdjacencyApp() {
     if (physics) sim.alpha(0.9).restart(); else sim.stop();
 
     const onTick = () => {
-      if (isDraggingRef.current) return;
       if (rafRef.current != null) return;
       rafRef.current = requestAnimationFrame(() => {
         rafRef.current = null;
@@ -455,30 +441,76 @@ export default function BubbleAdjacencyApp() {
     setLinkSource(null);
     setPhysics(true);
     setSelectedNodeId(null);
+    // Reset zoom to identity so fresh graph starts centered
     resetZoom();
   }
   
-  function updateFromList() {
-    if (!nodes.length) return;
-    const parsed = parseList(rawList || "");
-    if (!parsed.length) return;
-    pushHistory();
+function updateFromList() {
+  if (!nodes.length) return;
+  const parsed = parseList(rawList || "");
+  if (!parsed.length) return;
+  pushHistory();
 
-    if (updateMatchMode === "index") {
-      setNodes((prev) => prev.map((n, i) => {
-        if (i >= parsed.length) return n;
-        const src = parsed[i];
-        return {
-          ...n,
-          name: src.name,
-          ...(updateAreasFromList ? { area: Math.max(1, +src.area || n.area) } : {}),
-        };
+  if (updateMatchMode === "index") {
+    setNodes((prev) => prev.map((n, i) => {
+      if (i >= parsed.length) return n;
+      const src = parsed[i];
+      return {
+        ...n,
+        name: src.name,
+        ...(updateAreasFromList ? { area: Math.max(1, +src.area || n.area) } : {}),
+      };
+    }));
+    if (parsed.length > nodes.length) {
+      const extras = parsed.slice(nodes.length).map((x) => ({
+        id: Math.random().toString(36).slice(2, 9),
+        name: x.name,
+        area: Math.max(1, +x.area || 20),
+        x: (Math.random() - 0.5) * 40,
+        y: (Math.random() - 0.5) * 40,
+        fill: bulkFillTransparent ? "none" : bulkFill,
+        stroke: bulkStroke,
+        strokeWidth: bulkStrokeWidth,
+        textFont: bulkTextFont,
+        textColor: bulkTextColor,
+        textSize: clampTextSize(bulkTextSize),
       }));
-      if (parsed.length > nodes.length) {
-        const extras = parsed.slice(nodes.length).map((x) => ({
-          id: uid(),
-          name: x.name,
-          area: Math.max(1, +x.area || 20),
+      setNodes((prev) => [...prev, ...extras]);
+    }
+    return;
+  }
+
+  // default: match by NAME (safer after JSON imports that reorder nodes)
+  setNodes((prev) => {
+    const buckets = new Map();
+    prev.forEach((n, idx) => {
+      const k = norm(n.name);
+      const arr = buckets.get(k) || [];
+      arr.push(idx);
+      buckets.set(k, arr);
+    });
+
+    const updated = [...prev];
+    const used = new Set();
+    const extras = [];
+
+    parsed.forEach((src) => {
+      const key = norm(src.name);
+      const arr = buckets.get(key);
+      let idx = -1;
+      if (arr && arr.length) idx = arr.shift();
+      if (idx >= 0 && !used.has(idx)) {
+        updated[idx] = {
+          ...updated[idx],
+          name: src.name,
+          ...(updateAreasFromList ? { area: Math.max(1, +src.area || updated[idx].area) } : {}),
+        };
+        used.add(idx);
+      } else {
+        extras.push({
+          id: Math.random().toString(36).slice(2, 9),
+          name: src.name,
+          area: Math.max(1, +src.area || 20),
           x: (Math.random() - 0.5) * 40,
           y: (Math.random() - 0.5) * 40,
           fill: bulkFillTransparent ? "none" : bulkFill,
@@ -487,57 +519,14 @@ export default function BubbleAdjacencyApp() {
           textFont: bulkTextFont,
           textColor: bulkTextColor,
           textSize: clampTextSize(bulkTextSize),
-        }));
-        setNodes((prev) => [...prev, ...extras]);
+        });
       }
-      return;
-    }
-
-    // default: match by NAME
-    setNodes((prev) => {
-      const buckets = new Map();
-      prev.forEach((n, idx) => {
-        const k = norm(n.name);
-        const arr = buckets.get(k) || [];
-        arr.push(idx);
-        buckets.set(k, arr);
-      });
-
-      const updated = [...prev];
-      const used = new Set();
-      const extras = [];
-
-      parsed.forEach((src) => {
-        const key = norm(src.name);
-        const arr = buckets.get(key);
-        let idx = -1;
-        if (arr && arr.length) idx = arr.shift();
-        if (idx >= 0 && !used.has(idx)) {
-          updated[idx] = {
-            ...updated[idx],
-            name: src.name,
-            ...(updateAreasFromList ? { area: Math.max(1, +src.area || updated[idx].area) } : {}),
-          };
-          used.add(idx);
-        } else {
-          extras.push({
-            id: uid(),
-            name: src.name,
-            area: Math.max(1, +src.area || 20),
-            x: (Math.random() - 0.5) * 40,
-            y: (Math.random() - 0.5) * 40,
-            fill: bulkFillTransparent ? "none" : bulkFill,
-            stroke: bulkStroke,
-            strokeWidth: bulkStrokeWidth,
-            textFont: bulkTextFont,
-            textColor: bulkTextColor,
-            textSize: clampTextSize(bulkTextSize),
-          });
-        }
-      });
-      return extras.length ? [...updated, ...extras] : updated;
     });
-  }
+    return extras.length ? [...updated, ...extras] : updated;
+  });
+}
+
+
 
   function clearAll() {
     pushHistory();
@@ -576,57 +565,16 @@ export default function BubbleAdjacencyApp() {
     })));
   }
 
-  // ---------------------------- Node mutators (FIX) ---------------------------
-  function renameNode(id, name) {
-    const v = String(name || "").trim();
-    pushHistory();
-    setNodes(prev => prev.map(n => n.id === id ? { ...n, name: v || n.name } : n));
-  }
-  function changeArea(id, val) {
-    const a = Math.max(1, toNumber(val, NaN) || 0);
-    pushHistory();
-    setNodes(prev => prev.map(n => n.id === id ? { ...n, area: a } : n));
-    simRef.current?.alpha(0.4).restart();
-  }
-  function setNodeFill(id, fill) {
-    pushHistory();
-    setNodes(prev => prev.map(n => n.id === id ? { ...n, fill } : n));
-  }
-  function setNodeStroke(id, stroke) {
-    pushHistory();
-    setNodes(prev => prev.map(n => n.id === id ? { ...n, stroke } : n));
-  }
-  function setNodeStrokeW(id, w) {
-    const v = Math.max(1, Math.min(12, toNumber(w, 2)));
-    pushHistory();
-    setNodes(prev => prev.map(n => n.id === id ? { ...n, strokeWidth: v } : n));
-  }
-  function setNodeTextFont(id, font) {
-    pushHistory();
-    setNodes(prev => prev.map(n => n.id === id ? { ...n, textFont: font } : n));
-  }
-  function setNodeTextColor(id, color) {
-    pushHistory();
-    setNodes(prev => prev.map(n => n.id === id ? { ...n, textColor: color } : n));
-  }
-  function setNodeTextSize(id, v) {
-    const size = clampTextSize(v);
-    pushHistory();
-    setNodes(prev => prev.map(n => n.id === id ? { ...n, textSize: size } : n));
-  }
-
   // ---------------------------- Dragging -------------------------------------
   const draggingRef = useRef(null);
-  const isDraggingRef = useRef(false);
   const dragStartSnapshotRef = useRef(null);
   function onPointerDownNode(e, node) {
     e.stopPropagation();
     setSelectedNodeId(node.id);
     draggingRef.current = node.id;
     dragStartSnapshotRef.current = snapshot();
-    isDraggingRef.current = true;
     try { e.currentTarget.setPointerCapture?.(e.pointerId); } catch {}
-    simRef.current?.alphaTarget(0.3);
+    simRef.current?.alphaTarget(0.4).restart();
   }
   function svgToLocalPoint(svgEl, clientX, clientY) {
     if (!svgEl) return { x: clientX, y: clientY };
@@ -644,111 +592,104 @@ export default function BubbleAdjacencyApp() {
     const id = draggingRef.current; if (!id) return;
     const svg = svgRef.current; const { x, y } = svgToLocalPoint(svg, e.clientX, e.clientY);
     setNodes((prev) => prev.map((n) => (n.id === id ? { ...n, x, y, fx: x, fy: y } : n)));
-    try {
-      const sim = simRef.current;
-      if (sim && sim.nodes) {
-        const arr = sim.nodes();
-        for (const n of arr) {
-          if (n.id === id) { n.x = x; n.y = y; n.fx = x; n.fy = y; n.vx = 0; n.vy = 0; break; }
-        }
-      }
-    } catch {}
   }
-  function onPointerUp(e){
-    try { e.currentTarget.releasePointerCapture?.(e.pointerId); } catch {}
-    const id = draggingRef.current;
-    if (id){
-      setNodes(prev => prev.map(n => n.id === id ? ({...n, fx: undefined, fy: undefined}) : n));
-      draggingRef.current = null;
-      isDraggingRef.current = false;
-      simRef.current?.alphaTarget(0);
+  function onPointerUp() {
+    const id = draggingRef.current; if (!id) return; draggingRef.current = null;
+    setNodes((prev) => prev.map((n) => (n.id === id ? { ...n, fx: undefined, fy: undefined } : n)));
+    if (dragStartSnapshotRef.current) historyRef.current.push(dragStartSnapshotRef.current);
+    dragStartSnapshotRef.current = null;
+    futureRef.current = [];
+    simRef.current?.alphaTarget(0);
+  }
+
+  // ---------------------------- Node style setters ---------------------------
+  function renameNode(id, val) { pushHistory(); setNodes((p) => p.map((n) => (n.id === id ? { ...n, name: val } : n))); }
+  function changeArea(id, v) { pushHistory(); const a = toNumber(v, 1); setNodes((p) => p.map((n) => (n.id === id ? { ...n, area: Math.max(1, a) } : n))); }
+  function setNodeFill(id, colorOrNone) { pushHistory(); setNodes((p) => p.map((n) => (n.id === id ? { ...n, fill: colorOrNone } : n))); }
+  function setNodeStroke(id, color) { pushHistory(); setNodes((p) => p.map((n) => (n.id === id ? { ...n, stroke: color } : n))); }
+  function setNodeStrokeW(id, w) { pushHistory(); const width = Math.max(1, Math.min(12, toNumber(w, 2))); setNodes((p) => p.map((n) => (n.id === id ? { ...n, strokeWidth: width } : n))); }
+  function setNodeTextColor(id, c) { pushHistory(); setNodes((p) => p.map((n) => (n.id === id ? { ...n, textColor: c } : n))); }
+  function setNodeTextSize(id, s) { pushHistory(); setNodes((p) => p.map((n) => (n.id === id ? { ...n, textSize: clampTextSize(s) } : n))); }
+  function setNodeTextFont(id, f) { pushHistory(); setNodes((p) => p.map((n) => (n.id === id ? { ...n, textFont: f } : n))); }
+
+  // ---------------------------- Keyboard Shortcuts ---------------------------
+  const lastClickedLinkRef = useRef(null);
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.ctrlKey || e.metaKey) {
+        const k = e.key.toLowerCase();
+        if (k === "z") { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
+        if (k === "y") { e.preventDefault(); redo(); return; }
+        if (k === "s") { e.preventDefault(); saveJSON(); return; }
+      }
+      if (e.key === "Delete" || e.key === "Backspace") {
+        const id = lastClickedLinkRef.current; if (!id) return;
+        pushHistory();
+        setLinks((p) => p.filter((l) => l.id !== id));
+        lastClickedLinkRef.current = null;
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  
+// ---------------------------- Scenes API ------------------------------------
+function captureScenePayload() {
+  const pos = {};
+  for (const n of nodes) pos[n.id] = { x: n.x || 0, y: n.y || 0 };
+  return {
+    positions: pos,
+    zoom: { k: zoomTransform.k, x: zoomTransform.x, y: zoomTransform.y },
+    updatedAt: Date.now(),
+  };
+}
+function addScene(name) {
+  const nm = String(name || "").trim() || `Scene ${scenes.length + 1}`;
+  const payload = captureScenePayload();
+  const s = { id: Math.random().toString(36).slice(2,9), name: nm, ...payload };
+  setScenes(prev => [...prev, s]);
+  setActiveSceneId(s.id);
+}
+function applyScene(sceneId) {
+  const s = scenes.find(x => x.id === sceneId);
+  if (!s) return;
+  const { positions, zoom } = s;
+  setNodes(prev => prev.map(n => {
+    const p = positions[n.id];
+    return p ? { ...n, x: p.x, y: p.y, fx: undefined, fy: undefined } : n;
+  }));
+  try {
+    const svg = d3.select(svgRef.current);
+    const zoomer = zoomBehaviorRef.current;
+    if (svg && zoomer && zoom) {
+      svg.transition().duration(250)
+         .call(zoomer.transform, d3.zoomIdentity.translate(zoom.x, zoom.y).scale(zoom.k || 1));
     }
-  }
+  } catch {}
+  zeroVelocities();
+  simRef.current?.alpha(0.3).restart();
+}
+function updateScene(sceneId) {
+  const idx = scenes.findIndex(x => x.id === sceneId);
+  if (idx === -1) return;
+  const payload = captureScenePayload();
+  setScenes(prev => {
+    const next = [...prev];
+    next[idx] = { ...next[idx], ...payload };
+    return next;
+  });
+}
+function deleteScene(sceneId) {
+  setScenes(prev => prev.filter(x => x.id !== sceneId));
+  if (activeSceneId === sceneId) setActiveSceneId(null);
+}
 
-  function zeroVelocities() {
-    try {
-      const sim = simRef.current;
-      if (!sim) return;
-      const arr = sim.nodes ? sim.nodes() : [];
-      if (Array.isArray(arr)) {
-        for (const n of arr) { n.vx = 0; n.vy = 0; }
-      }
-    } catch {}
-  }
-
-  // Scenes helpers
-  function captureScenePayload(){
-    const positions = {};
-    nodes.forEach(n => positions[n.id] = { x: n.x || 0, y: n.y || 0 });
-    return { positions, zoom: { x: zoomTransform.x, y: zoomTransform.y, k: zoomTransform.k } };
-  }
-  function addScene(name) {
-    const nm = String(name || "").trim() || `Scene ${scenes.length + 1}`;
-    const payload = captureScenePayload();
-    const s = { id: uid(), name: nm, ...payload };
-    setScenes(prev => [...prev, s]);
-    setActiveSceneId(s.id);
-  }
-  function applyScene(sceneId) {
-    const s = scenes.find(x => x.id === sceneId);
-    if (!s) return;
-    const { positions, zoom } = s;
-    setNodes(prev => prev.map(n => {
-      const p = positions[n.id];
-      return p ? { ...n, x: p.x, y: p.y, fx: undefined, fy: undefined } : n;
-    }));
-    try {
-      const svg = d3.select(svgRef.current);
-      const zoomer = zoomBehaviorRef.current;
-      if (svg && zoomer && zoom) {
-        svg.transition().duration(250)
-           .call(zoomer.transform, d3.zoomIdentity.translate(zoom.x, zoom.y).scale(zoom.k || 1));
-      }
-    } catch {}
-    zeroVelocities();
-    simRef.current?.alpha(0.3).restart();
-  }
-  function updateScene(sceneId) {
-    const idx = scenes.findIndex(x => x.id === sceneId);
-    if (idx === -1) return;
-    const payload = captureScenePayload();
-    setScenes(prev => {
-      const next = [...prev];
-      next[idx] = { ...next[idx], ...payload };
-      return next;
-    });
-  }
-  function deleteScene(sceneId) {
-    setScenes(prev => prev.filter(x => x.id !== sceneId));
-    if (activeSceneId === sceneId) setActiveSceneId(null);
-  }
-
-  // ---------------------------- Export & JSON I/O (FIX) ----------------------
+// ---------------------------- Export helpers -------------------------------
   function getExportBg() {
     if (exportBgMode === "transparent") return null;
     if (exportBgMode === "white") return "#ffffff";
     return exportBgCustom || "#ffffff";
-  }
-
-  function buildExportPayload() {
-    return {
-      nodes, links, styles,
-      bulk: {
-        bulkFill,
-        bulkFillTransparent,
-        bulkStroke,
-        bulkStrokeWidth,
-        bulkTextFont,
-        bulkTextColor,
-        bulkTextSize: clampTextSize(bulkTextSize),
-      },
-      buffer,
-      arrowOverlap,
-      rotationSensitivity,
-      showMeasurements,
-      exportBgMode, exportBgCustom,
-      liveBgMode, liveBgCustom,
-    };
   }
 
   function exportSVG() {
@@ -800,7 +741,54 @@ export default function BubbleAdjacencyApp() {
     img.src = `data:image/svg+xml;base64,${svg64}`;
   }
 
+  
+  function buildExportPayload() {
+    return {
+      nodes, links, styles,
+      bulk: {
+        bulkFill,
+        bulkFillTransparent,
+        bulkStroke,
+        bulkStrokeWidth,
+        bulkTextFont,
+        bulkTextColor,
+        bulkTextSize: clampTextSize(bulkTextSize),
+      },
+      buffer,
+      arrowOverlap,
+      rotationSensitivity,
+      showMeasurements,
+      exportBgMode, exportBgCustom,
+      liveBgMode, liveBgCustom,
+    };
+  }
+
+  function exportJSON() {
+    const blob = new Blob(
+      [JSON.stringify({
+        nodes, links, styles,
+        bulk: {
+          bulkFill,
+          bulkFillTransparent,
+          bulkStroke,
+          bulkStrokeWidth,
+          bulkTextFont,
+          bulkTextColor,
+          bulkTextSize: clampTextSize(bulkTextSize),
+        },
+        buffer,
+        arrowOverlap,
+        rotationSensitivity,
+        exportBgMode, exportBgCustom,
+        liveBgMode, liveBgCustom,
+      }, null, 2)],
+      { type: "application/json" }
+    );
+    const url = URL.createObjectURL(blob); download(url, `bubble-diagram-${Date.now()}.json`);
+  }
+  // ---- File System Access API helpers (progressive enhancement) -------------
   async function saveJSON() {
+    // Save to the same file if we have a handle; otherwise fall back to Save As
     if (window.showSaveFilePicker && jsonHandleRef.current) {
       try {
         const handle = jsonHandleRef.current;
@@ -812,14 +800,19 @@ export default function BubbleAdjacencyApp() {
         console.warn("Save JSON failed, falling back to Save As…", err);
       }
     }
+    // Fallback
     return saveJSONAs();
   }
+
   async function saveJSONAs() {
     if (window.showSaveFilePicker) {
       try {
         const handle = await window.showSaveFilePicker({
           suggestedName: "bubble-diagram.json",
-          types: [{ description: "JSON files", accept: { "application/json": [".json"] } }],
+          types: [{
+            description: "JSON files",
+            accept: { "application/json": [".json"] },
+          }],
         });
         jsonHandleRef.current = handle;
         const writable = await handle.createWritable();
@@ -827,46 +820,14 @@ export default function BubbleAdjacencyApp() {
         await writable.close();
         return;
       } catch (err) {
-        console.warn("Save As cancelled or failed; using fallback.", err);
+        console.warn("Save As cancelled or failed; using download() fallback.", err);
       }
     }
-    const name = (typeof window !== "undefined" ? (window.prompt("File name", "bubble-diagram.json") || "bubble-diagram.json") : "bubble-diagram.json");
+    // Fallback: simple download with a prompt for the filename
+    let name = typeof window !== "undefined" ? (window.prompt("File name", "bubble-diagram.json") || "bubble-diagram.json") : "bubble-diagram.json";
     const blob = new Blob([JSON.stringify(buildExportPayload(), null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob); download(url, name);
-  }
-
-  function loadFromData(d) {
-    if (Array.isArray(d.nodes)) {
-      const normalized = d.nodes.map((n) => ({
-        ...n,
-        id: n.id || uid(),
-        name: String(n.name ?? "Unnamed"),
-        area: Math.max(1, toNumber(n.area, 20)),
-        textSize: clampTextSize(n.textSize ?? bulkTextSize),
-        strokeWidth: Math.max(1, Math.min(12, toNumber(n.strokeWidth, bulkStrokeWidth))),
-      }));
-      setNodes(normalized);
-    }
-    if (Array.isArray(d.links)) setLinks(d.links.filter((l) => l.source && l.target));
-    if (d.styles) setStyles((s) => ({ ...s, ...d.styles }));
-    if (d.bulk) {
-      const b = d.bulk;
-      if (typeof b.bulkFill === "string") setBulkFill(b.bulkFill);
-      if (typeof b.bulkFillTransparent === "boolean") setBulkFillTransparent(b.bulkFillTransparent);
-      if (typeof b.bulkStroke === "string") setBulkStroke(b.bulkStroke);
-      if (typeof b.bulkStrokeWidth === "number") setBulkStrokeWidth(Math.max(1, Math.min(12, b.bulkStrokeWidth)));
-      if (typeof b.bulkTextFont === "string") setBulkTextFont(b.bulkTextFont);
-      if (typeof b.bulkTextColor === "string") setBulkTextColor(b.bulkTextColor);
-      if (b.bulkTextSize != null) setBulkTextSize(clampTextSize(b.bulkTextSize));
-    }
-    if (typeof d.buffer === "number") setBuffer(d.buffer);
-    if (typeof d.arrowOverlap === "number") setArrowOverlap(d.arrowOverlap);
-    if (typeof d.rotationSensitivity === "number") setRotationSensitivity(d.rotationSensitivity);
-    if (typeof d.showMeasurements === "boolean") setShowMeasurements(d.showMeasurements);
-    if (d.exportBgMode) setExportBgMode(d.exportBgMode);
-    if (d.exportBgCustom) setExportBgCustom(d.exportBgCustom);
-    if (d.liveBgMode) setLiveBgMode(d.liveBgMode);
-    if (d.liveBgCustom) setLiveBgCustom(d.liveBgCustom);
+    const url = URL.createObjectURL(blob);
+    download(url, name);
   }
 
   async function openJSON() {
@@ -874,38 +835,111 @@ export default function BubbleAdjacencyApp() {
       try {
         const [handle] = await window.showOpenFilePicker({
           multiple: false,
-          types: [{ description: "JSON files", accept: { "application/json": [".json"] } }],
+          types: [{
+            description: "JSON files",
+            accept: { "application/json": [".json"] },
+          }],
         });
         if (!handle) return;
         const file = await handle.getFile();
         const text = await file.text();
-        jsonHandleRef.current = handle;
-        const data = JSON.parse(text);
-        loadFromData(data);
+        jsonHandleRef.current = handle; // remember for "Save" back to same file
+        parseAndLoadJSON(text);
         return;
       } catch (err) {
         console.warn("Open JSON cancelled or failed.", err);
       }
     }
+    // Fallback: trigger the hidden file input (existing Import JSON)
     const input = document.createElement("input");
-    input.type = "file"; input.accept = "application/json";
+    input.type = "file";
+    input.accept = "application/json";
     input.onchange = (e) => {
       const file = e.target.files?.[0];
       if (!file) return;
-      jsonHandleRef.current = null;
+      jsonHandleRef.current = null; // file input doesn't grant a persistent handle
       const r = new FileReader();
-      r.onload = () => { try { loadFromData(JSON.parse(String(r.result || ""))); } catch { alert("Invalid JSON file"); } };
+      r.onload = () => parseAndLoadJSON(String(r.result || ""));
       r.readAsText(file);
     };
     input.click();
   }
+
+  function parseAndLoadJSON(str) {
+    try {
+      const d = JSON.parse(str);
+      if (Array.isArray(d.nodes)) {
+        const normalized = d.nodes.map((n) => ({
+          ...n,
+          id: n.id || uid(),
+          name: String(n.name ?? "Unnamed"),
+          area: Math.max(1, toNumber(n.area, 20)),
+          textSize: clampTextSize(n.textSize ?? bulkTextSize),
+          strokeWidth: Math.max(1, Math.min(12, toNumber(n.strokeWidth, bulkStrokeWidth))),
+        }));
+        setNodes(normalized);
+      }
+      if (Array.isArray(d.links)) setLinks(d.links.filter((l) => l.source && l.target));
+      if (d.styles) setStyles((s) => ({ ...s, ...d.styles }));
+      if (d.bulk) {
+        const b = d.bulk;
+        if (typeof b.bulkFill === "string") setBulkFill(b.bulkFill);
+        if (typeof b.bulkFillTransparent === "boolean") setBulkFillTransparent(b.bulkFillTransparent);
+        if (typeof b.bulkStroke === "string") setBulkStroke(b.bulkStroke);
+        if (typeof b.bulkStrokeWidth === "number") setBulkStrokeWidth(Math.max(1, Math.min(12, b.bulkStrokeWidth)));
+        if (typeof b.bulkTextFont === "string") setBulkTextFont(b.bulkTextFont);
+        if (typeof b.bulkTextColor === "string") setBulkTextColor(b.bulkTextColor);
+        if (b.bulkTextSize != null) setBulkTextSize(clampTextSize(b.bulkTextSize));
+      }
+      if (typeof d.buffer === "number") setBuffer(d.buffer);
+      if (typeof d.arrowOverlap === "number") setArrowOverlap(d.arrowOverlap);
+      if (typeof d.rotationSensitivity === "number") setRotationSensitivity(d.rotationSensitivity);
+      if (typeof d.showMeasurements === "boolean") setShowMeasurements(d.showMeasurements);
+      if (d.exportBgMode) setExportBgMode(d.exportBgMode);
+      if (d.exportBgCustom) setExportBgCustom(d.exportBgCustom);
+      if (d.liveBgMode) setLiveBgMode(d.liveBgMode);
+      if (d.liveBgCustom) setLiveBgCustom(d.liveBgCustom);
+    } catch {
+      alert("Invalid JSON file");
+    }
+  }
+
 
   function importJSON(file) {
     const r = new FileReader();
     r.onload = () => {
       try {
         const d = JSON.parse(r.result);
-        loadFromData(d);
+        if (Array.isArray(d.nodes)) {
+          const normalized = d.nodes.map((n) => ({
+            ...n,
+            id: n.id || uid(),
+            name: String(n.name ?? "Unnamed"),
+            area: Math.max(1, toNumber(n.area, 20)),
+            textSize: clampTextSize(n.textSize ?? bulkTextSize),
+            strokeWidth: Math.max(1, Math.min(12, toNumber(n.strokeWidth, bulkStrokeWidth))),
+          }));
+          setNodes(normalized);
+        }
+        if (Array.isArray(d.links)) setLinks(d.links.filter((l) => l.source && l.target));
+        if (d.styles) setStyles((s) => ({ ...s, ...d.styles }));
+        if (d.bulk) {
+          const b = d.bulk;
+          if (typeof b.bulkFill === "string") setBulkFill(b.bulkFill);
+          if (typeof b.bulkFillTransparent === "boolean") setBulkFillTransparent(b.bulkFillTransparent);
+          if (typeof b.bulkStroke === "string") setBulkStroke(b.bulkStroke);
+          if (typeof b.bulkStrokeWidth === "number") setBulkStrokeWidth(Math.max(1, Math.min(12, b.bulkStrokeWidth)));
+          if (typeof b.bulkTextFont === "string") setBulkTextFont(b.bulkTextFont);
+          if (typeof b.bulkTextColor === "string") setBulkTextColor(b.bulkTextColor);
+          if (b.bulkTextSize != null) setBulkTextSize(clampTextSize(b.bulkTextSize));
+        }
+        if (typeof d.buffer === "number") setBuffer(d.buffer);
+        if (typeof d.arrowOverlap === "number") setArrowOverlap(d.arrowOverlap);
+        if (typeof d.rotationSensitivity === "number") setRotationSensitivity(d.rotationSensitivity);
+        if (d.exportBgMode) setExportBgMode(d.exportBgMode);
+        if (d.exportBgCustom) setExportBgCustom(d.exportBgCustom);
+        if (d.liveBgMode) setLiveBgMode(d.liveBgMode);
+        if (d.liveBgCustom) setLiveBgCustom(d.liveBgCustom);
       } catch {
         alert("Invalid JSON file");
       }
@@ -913,7 +947,19 @@ export default function BubbleAdjacencyApp() {
     r.readAsText(file);
   }
 
-  // ---------------------------- Zoom / Pan / Fit -----------------------------
+  
+function zeroVelocities() {
+  try {
+    const sim = simRef.current;
+    if (!sim) return;
+    const arr = sim.nodes ? sim.nodes() : [];
+    if (Array.isArray(arr)) {
+      for (const n of arr) { n.vx = 0; n.vy = 0; }
+    }
+  } catch {}
+}
+
+// ---------------------------- Zoom / Pan / Fit -----------------------------
   useEffect(() => {
     const svg = d3.select(svgRef.current);
     const zoom = d3.zoom()
@@ -923,7 +969,8 @@ export default function BubbleAdjacencyApp() {
       });
     zoomBehaviorRef.current = zoom;
     svg.call(zoom);
-    svg.on("dblclick.zoom", null);
+    // Double-click to reset zoom
+    svg.on("dblclick.zoom", null); // disable default dblclick zoom
     svg.on("dblclick", () => resetZoom());
     return () => svg.on(".zoom", null);
   }, []);
@@ -945,6 +992,7 @@ export default function BubbleAdjacencyApp() {
   }
   function fitToView() {
     if (!nodes.length) return resetZoom();
+    // Compute bounds from node centers + radii
     const r = (n) => rOf(n.area);
     const minX = d3.min(nodes, (n) => (n.x || 0) - r(n)) ?? -600;
     const maxX = d3.max(nodes, (n) => (n.x || 0) + r(n)) ?? 600;
@@ -995,8 +1043,6 @@ export default function BubbleAdjacencyApp() {
     if (liveBgMode === "white") return "#ffffff";
     return liveBgCustom || THEME.surface;
   })();
-
-  const lastClickedLinkRef = useRef(null);
 
   return (
     <div
@@ -1126,7 +1172,7 @@ export default function BubbleAdjacencyApp() {
               <span className="opacity-70">px</span>
             </div>
 
-            {/* Arrow Overlap */}
+            {/* NEW: Arrow Overlap */}
             <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
               <span className="opacity-70">Arrow overlap:</span>
               <input type="range" min={0} max={60} step={1} value={arrowOverlap} onChange={(e) => setArrowOverlap(+e.target.value)} />
@@ -1134,14 +1180,13 @@ export default function BubbleAdjacencyApp() {
               <span className="opacity-70">px</span>
             </div>
 
-            {/* Rotation Sensitivity */}
+            {/* NEW: Rotation Sensitivity */}
             <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
               <span className="opacity-70">Rotation sensitivity:</span>
               <input type="range" min={0} max={100} step={1} value={rotationSensitivity} onChange={(e) => setRotationSensitivity(+e.target.value)} />
               <input type="number" min={0} max={100} value={rotationSensitivity} className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" onChange={(e) => setRotationSensitivity(Math.max(0, Math.min(100, +e.target.value || 0)))} />
               <span className="opacity-70">%</span>
             </div>
-
             {/* Measurements toggle */}
             <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
               <label className="flex items-center gap-1">
@@ -1150,27 +1195,29 @@ export default function BubbleAdjacencyApp() {
               </label>
             </div>
 
+
             {/* Graph actions */}
             <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={() => setPhysics((p) => !p)}>{physics ? "Physics: ON" : "Physics: OFF"}</button>
             <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={() => setNodes([...nodes])}>Re-Layout</button>
 
-            {/* Scenes */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-2 py-2 text-xs">
-              <span className="opacity-70">Scene:</span>
-              <select className="bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
-                      value={activeSceneId || ""}
-                      onChange={(e) => setActiveSceneId(e.target.value || null)}>
-                <option value="">(none)</option>
-                {scenes.map((s) => (<option key={s.id} value={s.id}>{s.name}</option>))}
-              </select>
-              <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" onClick={() => {
-                const nm = window.prompt("New scene name", `Scene ${scenes.length + 1}`);
-                if (nm != null) addScene(nm);
-              }}>Add</button>
-              <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" disabled={!activeSceneId} onClick={() => activeSceneId && applyScene(activeSceneId)}>Go</button>
-              <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" disabled={!activeSceneId} onClick={() => activeSceneId && updateScene(activeSceneId)}>Update</button>
-              <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" disabled={!activeSceneId} onClick={() => activeSceneId && deleteScene(activeSceneId)}>Delete</button>
-            </div>
+            
+{/* Scenes */}
+<div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-2 py-2 text-xs">
+  <span className="opacity-70">Scene:</span>
+  <select className="bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
+          value={activeSceneId || ""}
+          onChange={(e) => setActiveSceneId(e.target.value || null)}>
+    <option value="">(none)</option>
+    {scenes.map((s) => (<option key={s.id} value={s.id}>{s.name}</option>))}
+  </select>
+  <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" onClick={() => {
+    const nm = window.prompt("New scene name", `Scene ${scenes.length + 1}`);
+    if (nm != null) addScene(nm);
+  }}>Add</button>
+  <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" disabled={!activeSceneId} onClick={() => activeSceneId && applyScene(activeSceneId)}>Go</button>
+  <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" disabled={!activeSceneId} onClick={() => activeSceneId && updateScene(activeSceneId)}>Update</button>
+  <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" disabled={!activeSceneId} onClick={() => activeSceneId && deleteScene(activeSceneId)}>Delete</button>
+</div>
 
             {/* Zoom controls */}
             <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-2 py-2 text-xs">
@@ -1283,30 +1330,31 @@ VOD Review / Theater, 60`} value={rawList} onChange={(e) => setRawList(e.target.
         <div ref={containerRef} className="relative rounded-2xl border border-[#2a2a3a] overflow-hidden" style={{ background: liveBg }}>
           <svg ref={svgRef} width={"100%"} height={700} viewBox={`-600 -350 1200 700`} className="block">
             <MarkerDefs styles={styles} />
-            <LinkMask nodes={nodes} rOf={rOf} arrowOverlap={arrowOverlap} />
             <g id="zoomable" transform={zoomTransform.toString()}>
-              {/* Links (masked so strokes don't pass through bubbles) */}
-              <g mask="url(#mask-links-hide-bubbles)">{links.map((l) => {
+              {/* Links */}
+              {links.map((l) => {
                 const s = nodes.find((n) => n.id === l.source); const t = nodes.find((n) => n.id === l.target);
                 if (!s || !t) return null;
                 const dx = (t.x - s.x), dy = (t.y - s.y); const dist = Math.hypot(dx, dy) || 1; const nx = dx / dist, ny = dy / dist;
                 const rs = rOf(s.area), rt = rOf(t.area);
 
-                // Keep main line outside the fill (mask handles any residuals)
-                const x1 = (s.x || 0) + nx * (rs + 2);
-                const y1 = (s.y || 0) + ny * (rs + 2);
-                const x2 = (t.x || 0) - nx * (rt + 6);
-                const y2 = (t.y || 0) - ny * (rt + 6);
+                // NEW: let arrow/line start & end move inside the circle by `arrowOverlap` (clamped per radius)
+                const insetS = Math.max(0, Math.min(arrowOverlap, rs - 2));
+                const insetT = Math.max(0, Math.min(arrowOverlap, rt - 6));
+
+                const x1 = s.x + nx * (rs + 2 - insetS);
+                const y1 = s.y + ny * (rs + 2 - insetS);
+                const x2 = t.x - nx * (rt + 6 - insetT);
+                const y2 = t.y - ny * (rt + 6 - insetT);
 
                 const st = styles[l.type];
                 return (
                   <g key={l.id} onDoubleClick={() => { pushHistory(); setLinks((p) => p.filter((x) => x.id !== l.id)); }} onClick={() => (lastClickedLinkRef.current = l.id)}>
-                    <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={st.color} strokeWidth={st.width} strokeDasharray={dashFor(l.type)} opacity={0.98} />
+                    <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={st.color} strokeWidth={st.width} strokeDasharray={dashFor(l.type)} markerStart={markerUrl(l.type, "start")} markerEnd={markerUrl(l.type, "end")} opacity={0.98} />
                   </g>
                 );
-              })}</g>
-
-              {/* Nodes (drawn above masked lines) */}
+              })}
+              {/* Nodes */}
               {nodes.map((n) => {
                 const r = rOf(n.area);
                 const isSrc = linkSource === n.id && mode === "connect";
@@ -1344,9 +1392,15 @@ VOD Review / Theater, 60`} value={rawList} onChange={(e) => setRawList(e.target.
                     </text>
 
                     {showMeasurements && (
-                      <text y={r - 18} textAnchor="middle" style={{ fill: THEME.subtle, fontSize: areaSize, fontFamily: labelFont }}>
-                        {n.area} m²
-                      </text>
+
+
+                    
+
+                    <text y={r - 18} textAnchor="middle" style={{ fill: THEME.subtle, fontSize: areaSize, fontFamily: labelFont }}>
+                      {n.area} m²
+                    </text>
+
+
                     )}
                     <foreignObject x={-r} y={-18} width={r * 2} height={36} data-ignore-export>
                       <InlineEdit text={n.name} onChange={(val) => renameNode(n.id, val)} className="mx-auto text-center" />
@@ -1357,50 +1411,6 @@ VOD Review / Theater, 60`} value={rawList} onChange={(e) => setRawList(e.target.
                   </g>
                 );
               })}
-
-              {/* OVERLAY MARKERS (drawn LAST so arrowheads overlap the bubbles) */}
-              <g style={{ pointerEvents: "none" }}>
-                {links.map((l) => {
-                  const s = nodes.find((n) => n.id === l.source); const t = nodes.find((n) => n.id === l.target);
-                  if (!s || !t) return null;
-                  const dx = (t.x - s.x), dy = (t.y - s.y); const dist = Math.hypot(dx, dy) || 1; const nx = dx / dist, ny = dy / dist;
-                  const rs = rOf(s.area), rt = rOf(t.area);
-                  const st = styles[l.type];
-
-                  const insetS = Math.max(0, Math.min(arrowOverlap, rs - 2));
-                  const insetT = Math.max(0, Math.min(arrowOverlap, rt - 6));
-
-                  const sx = (s.x || 0) + nx * (rs + 2 - insetS);
-                  const sy = (s.y || 0) + ny * (rs + 2 - insetS);
-                  const tx = (t.x || 0) - nx * (rt + 6 - insetT);
-                  const ty = (t.y || 0) - ny * (rt + 6 - insetT);
-
-                  const eps = 1e-3;
-
-                  return (
-                    <g key={`mk-${l.id}`}>
-                      {styles[l.type].headStart !== "none" && (
-                        <line
-                          x1={sx + nx * eps} y1={sy + ny * eps}
-                          x2={sx} y2={sy}
-                          stroke={st.color}
-                          strokeWidth={st.width}
-                          markerStart={markerUrl(l.type, "start")}
-                        />
-                      )}
-                      {styles[l.type].headEnd !== "none" && (
-                        <line
-                          x1={tx} y1={ty}
-                          x2={tx - nx * eps} y2={ty - ny * eps}
-                          stroke={st.color}
-                          strokeWidth={st.width}
-                          markerEnd={markerUrl(l.type, "end")}
-                        />
-                      )}
-                    </g>
-                  );
-                })}
-              </g>
             </g>
           </svg>
 
@@ -1419,8 +1429,8 @@ VOD Review / Theater, 60`} value={rawList} onChange={(e) => setRawList(e.target.
             About this tool
           </summary>
           <div className="mt-3 text-sm leading-6 text-[#d8d8e2]">
-            <p><strong>Authored by:</strong> Mark Jay O. Gooc — Architecture student, Batangas State University – TNEU (ARC‑5108)</p>
-            <p className="opacity-80">Bubble Diagram Builder (React + D3). Version 4.5 — white‑screen fix + arrowhead overlap, preset persistence, live background controls, zoom/pan, fullscreen, and improved exports.</p>
+            <p><strong>Authored by:</strong> Mark Jay O. Gooc — Architecture student, Batangas State University – TNEU. </p>
+            <p className="opacity-80">All rights Reserve 2025.</p>
           </div>
         </details>
       </div>
@@ -1476,6 +1486,16 @@ function InlineEditField({ label, value, onChange }) {
   );
 }
 
+// Wrap long labels into tspans
+function wrapText(text, max = 16) {
+  const words = String(text).split(/\s+/); const lines = []; let cur = "";
+  for (const w of words) {
+    if ((cur + " " + w).trim().length > max) { if (cur) lines.push(cur); cur = w; }
+    else { cur = (cur + " " + w).trim(); }
+  }
+  if (cur) lines.push(cur);
+  return lines.slice(0, 5);
+}
 // --- Precise width-based SVG text wrapping (uses canvas measureText) ---------
 const _measureCtx = (() => {
   try {
@@ -1507,6 +1527,7 @@ function wrapToWidth(label, fontFamily, fontPx, maxWidth, maxLines = 5) {
   for (let i = 0; i < words.length; i++) {
     const w = words[i];
     if (!cur) {
+      // If the word alone exceeds width, hard-wrap by chars
       if (measureWidth(w, fontFamily, fontPx) > maxWidth) {
         let buf = "";
         for (const ch of w) {
@@ -1529,24 +1550,25 @@ function wrapToWidth(label, fontFamily, fontPx, maxWidth, maxLines = 5) {
     if (lines.length >= maxLines) break;
   }
   if (lines.length < maxLines && cur) pushLine(cur);
+
+  // Ellipsize if too many words to fit
   if (lines.length > maxLines) {
     return lines.slice(0, maxLines - 1).concat([lines[maxLines - 1] + "…"]);
   }
   return lines;
 }
 
+
 // Smoke tests (console)
 (function runSmokeTests() {
   try {
-    const parsed = [
-      {name:"A", area:10},
-      {name:"B", area:20},
-      {name:"C", area:30},
-      {name:"NoArea"}
-    ];
+    const parsed = parseList("A, 10\\nB 20\\nC-30\\nNoArea");
+    console.assert(parsed.length === 4, "parseList length");
+    console.assert(parsed[0].area === 10 && parsed[1].area === 20 && parsed[2].area === 30, "parseList areas");
     const r = scaleRadius(parsed);
     const r10 = r(10), r20 = r(20), r30 = r(30);
     console.assert(r10 <= r20 && r20 <= r30, "scaleRadius monotonic");
+    console.assert(wrapText("one two three four five six seven eight nine ten", 4).length <= 5, "wrapText cap");
     console.assert(clampTextSize("16") === 16, "text size string→number");
     console.assert(clampTextSize(5) === TEXT_MIN, "text size min clamp");
     console.assert(clampTextSize(99) === TEXT_MAX, "text size max clamp");
