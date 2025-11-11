@@ -1119,8 +1119,15 @@ function zeroVelocities() {
         </div>
       )}
 {/* Right Panel */}
-      <aside className={panelOpen ? "fixed right-0 top-0 z-20 h-screen w-[420px] overflow-y-auto border-l border-[#2a2a3a] bg-[#0b0b12]" : "fixed right-0 top-0 z-20 h-screen w-[56px] overflow-y-auto border-l border-[#2a2a3a] bg-[#0b0b12]"}>
-        <div className="px-3 py-3 grid grid-cols-1 gap-3 items-start gap-3 grid-cols-[repeat(auto-fit,minmax(520px,1fr))]">
+            <aside className={panelOpen ? "fixed right-0 top-0 z-20 h-screen w-[420px] overflow-y-auto border-l border-[#2a2a3a] bg-[#0b0b12]" : "fixed right-0 top-0 z-20 h-screen w-[56px] overflow-y-auto border-l border-[#2a2a3a] bg-[#0b0b12]"}>
+        <div className="px-3 py-3 grid grid-cols-1 gap-3">
+          {/* Panel toggle */}
+          <button
+            className="absolute left-[-28px] top-4 h-8 w-8 rounded-full border border-[#2a2a3a] bg-[#0b0b12] hover:bg-white/5 text-xs"
+            title={panelOpen ? "Collapse" : "Expand"}
+            onClick={()=>setPanelOpen(p=>!p)}
+          >{panelOpen ? "»" : "«"}</button>
+
           {/* Panel toggle */}
           <button
             className="absolute left-[-28px] top-4 h-8 w-8 rounded-full border border-[#2a2a3a] bg-[#0b0b12] hover:bg-white/5 text-xs"
@@ -1387,8 +1394,7 @@ VOD Review / Theater, 60`} value={rawList} onChange={(e) => setRawList(e.target.
           </div>
         </div>
       </aside>
-
-      {/* Canvas */}
+{/* Canvas */}
       <div className="mx-auto max-w-[1400px] px-4 my-4 md:pr-[440px]">
         <div ref={containerRef} className="relative rounded-2xl border border-[#2a2a3a] overflow-hidden" style={{ background: liveBg }}>
           <svg ref={svgRef} width={"100%"} height={700} viewBox={`-600 -350 1200 700`} className="block">
