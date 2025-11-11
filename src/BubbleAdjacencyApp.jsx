@@ -1430,7 +1430,7 @@ VOD Review / Theater, 60`} value={rawList} onChange={(e) => setRawList(e.target.
           </summary>
           <div className="mt-3 text-sm leading-6 text-[#d8d8e2]">
             <p><strong>Authored by:</strong> Mark Jay O. Gooc — Architecture student, Batangas State University – TNEU (ARC‑5108)</p>
-            <p className="opacity-80">Bubble Diagram Builder (React + D3). Version 4.3 — arrow overlap, rotation sensitivity, rounded color pickers, preset persistence, live background controls, zoom/pan, fullscreen, and improved exports.</p>
+            <p className="opacity-80">Bubble Diagram Builder (React + D3). Version 6.4 </p>
           </div>
         </details>
       </div>
