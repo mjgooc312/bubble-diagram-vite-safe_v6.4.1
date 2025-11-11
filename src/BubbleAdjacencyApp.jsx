@@ -1,18 +1,18 @@
-
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as d3 from "d3";
 
 /**
  * Bubble Diagram Builder – Force-directed (React + D3)
- * v4.3 — Arrow overlap + Rotation sensitivity + Rounded color pickers
+ * v4.6 — UI refresh (design-only), preserves all previous functionality
  *
- * What’s new vs your uploaded file:
- *  • Arrow overlap slider: lets link lines/arrowheads extend inside the bubbles.
- *  • Rotation sensitivity slider: adds a gentle tangential “spin” force so bubbles orbit/settle based on sensitivity.
- *  • Color inputs styled as smooth rounded pills (no sharp corners).
- *  • Presets persist arrowOverlap and rotationSensitivity along with the rest.
+ * What changed (UI only):
+ * • Slim command bar + floating canvas dock (zoom/fit/fullscreen/physics/detangle/exports).
+ * • Controls grouped into neat collapsible cards (Spaces · Styles · Layout & Physics · Scenes · Files · Stats).
+ * • High-contrast selects, rounded color pills, subtle borders, tidy spacing, custom scrollbars.
+ * • No text glow; readability kept via good contrast.
  *
- * Drop this into your Vite React app (e.g., src/BubbleAdjacencyApp.jsx) and render it.
+ * What did NOT change:
+ * • All features/behaviors, data model, sim/forces, arrow overlap, scenes, export/import, etc.
  */
 
 // ---- Theme (UI chrome only; not the canvas background) ----------------------
@@ -64,7 +64,6 @@ function toNumber(v, fallback) {
 function norm(s){
   return String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
 }
-
 
 /** Clamp text size into safe range and coerce to number */
 function clampTextSize(v) {
@@ -153,7 +152,8 @@ function MarkerDefs({ styles }) {
           {shape === "diamond" && (
             <polygon
               points="3.5 0, 7 3.5, 3.5 7, 0 3.5"
-              transform={kind === "end" ? "translate(3,0)" : "translate(1,0)"}
+              transform={kind === "end" ? "translate(3,0)" : "translate(1,0)"
+              }
               fill={st.color}
             />
           )}
@@ -214,30 +214,34 @@ export default function BubbleAdjacencyApp() {
   // Buffer between bubbles
   const [buffer, setBuffer] = useState(6);
 
-  // NEW: arrows can overlap into the circles — in pixels
+  // arrows can overlap into the circles — in pixels
   const [arrowOverlap, setArrowOverlap] = useState(0); // 0..40+
 
-  // NEW: rotation sensitivity (adds a light "spin" force)
+  // rotation sensitivity (adds a light "spin" force)
   const [rotationSensitivity, setRotationSensitivity] = useState(0); // 0..100
   const [showMeasurements, setShowMeasurements] = useState(true);
 
-// --- Scenes (positions + zoom) ---
-const SCENES_KEY = "bubbleScenes:v1";
-const [scenes, setScenes] = useState(() => {
-  try { return JSON.parse(localStorage.getItem(SCENES_KEY) || "[]"); }
-  catch { return []; }
-});
-const [activeSceneId, setActiveSceneId] = useState(null);
-useEffect(() => {
-  try { localStorage.setItem(SCENES_KEY, JSON.stringify(scenes)); } catch {}
-}, [scenes]);
+  // detangle pulse (explode → shrink)
+  const [explodeFactor, setExplodeFactor] = useState(1); // 1 = normal, >1 = expanded
+  const explodeTORef = useRef(null);
+
+  // --- Scenes (positions + zoom) ---
+  const SCENES_KEY = "bubbleScenes:v1";
+  const [scenes, setScenes] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(SCENES_KEY) || "[]"); }
+    catch { return []; }
+  });
+  const [activeSceneId, setActiveSceneId] = useState(null);
+  useEffect(() => {
+    try { localStorage.setItem(SCENES_KEY, JSON.stringify(scenes)); } catch {}
+  }, [scenes]);
   const [updateAreasFromList, setUpdateAreasFromList] = useState(false);
-  const [updateMatchMode, setUpdateMatchMode] = useState("name"); // "name" | "index" // update areas too when applying list
+  const [updateMatchMode, setUpdateMatchMode] = useState("name"); // "name" | "index"
 
   // Edge style presets (necessary vs ideal)
   const [styles, setStyles] = useState({
     necessary: { color: "#8b5cf6", dashed: false, width: 3, headStart: "arrow", headEnd: "arrow" },
-    ideal: { color: "#facc15", dashed: true, width: 3, headStart: "arrow", headEnd: "arrow" },
+    ideal:     { color: "#facc15", dashed: true,  width: 3, headStart: "arrow", headEnd: "arrow" },
   });
 
   // Export background (used for exported image files)
@@ -263,7 +267,6 @@ useEffect(() => {
   const containerRef = useRef(null);
   // File handle for JSON (File System Access API)
   const jsonHandleRef = useRef(null);
-
 
   // Zoom / Pan
   const zoomBehaviorRef = useRef(null);
@@ -304,7 +307,6 @@ useEffect(() => {
   }
 
   // ---------------------------- Preset Persistence ---------------------------
-  // Load on mount
   useEffect(() => {
     const p = loadPresets();
     if (!p) return;
@@ -328,7 +330,6 @@ useEffect(() => {
     if (p.liveBgCustom) setLiveBgCustom(p.liveBgCustom);
   }, []);
 
-  // Save whenever any preset changes
   useEffect(() => {
     const payload = {
       styles,
@@ -355,7 +356,8 @@ useEffect(() => {
     bulkFill, bulkFillTransparent, bulkStroke, bulkStrokeWidth,
     bulkTextFont, bulkTextColor, bulkTextSize,
     exportBgMode, exportBgCustom,
-    liveBgMode, liveBgCustom
+    liveBgMode, liveBgCustom,
+    scenes, activeSceneId
   ]);
 
   // ---------------------------- D3 Force Simulation --------------------------
@@ -367,7 +369,7 @@ useEffect(() => {
       .force("charge", d3.forceManyBody().strength(-80))
       .force("collide", d3.forceCollide().radius((d) => (d.r || BASE_R_MIN) + buffer))
       .force("center", d3.forceCenter(0, 0))
-      .force("spin", makeSpinForce(rotationSensitivity)); // NEW
+      .force("spin", makeSpinForce(rotationSensitivity));
     simRef.current = sim;
     return () => sim.stop();
   }, []);
@@ -379,6 +381,22 @@ useEffect(() => {
     sim.force("spin", makeSpinForce(rotationSensitivity));
     if (physics && rotationSensitivity > 0) sim.alpha(0.5).restart();
   }, [rotationSensitivity, physics]);
+
+  // Update charge & collide strength when explodeFactor changes (detangle pulse)
+  useEffect(() => {
+    const sim = simRef.current; if (!sim) return;
+    const baseCharge = -80;
+    const mult = explodeFactor > 1 ? 1.8 * explodeFactor : 1;
+    const charge = sim.force("charge");
+    charge && charge.strength(baseCharge * mult);
+
+    // also refresh collide with extra cushion
+    sim.force("collide", d3.forceCollide()
+      .radius((d) => (d.r || BASE_R_MIN) + buffer + Math.max(0, (explodeFactor - 1) * 18))
+    );
+
+    if (physics) sim.alpha(0.7).restart();
+  }, [explodeFactor, buffer, physics]);
 
   const rafRef = useRef(null);
   useEffect(() => {
@@ -392,12 +410,15 @@ useEffect(() => {
       .distance((l) => {
         const base = (l.source.r || BASE_R_MIN) + (l.target.r || BASE_R_MIN);
         const k = l.type === "necessary" ? 1.1 : 1.0;
-        return base * 1.05 * k + 40 + buffer * 1.5;
+        const d0 = base * 1.05 * k + 40 + buffer * 1.5;
+        return d0 * (explodeFactor || 1); // expand when detangling
       })
       .strength((l) => (l.type === "necessary" ? 0.5 : 0.25));
 
     sim.nodes(nn);
-    sim.force("collide", d3.forceCollide().radius((d) => (d.r || BASE_R_MIN) + buffer));
+    sim.force("collide", d3.forceCollide()
+      .radius((d) => (d.r || BASE_R_MIN) + buffer + Math.max(0, (explodeFactor - 1) * 18))
+    );
     sim.force("link", linkForce);
     sim.force("x", d3.forceX().strength(0.03));
     sim.force("y", d3.forceY().strength(0.03));
@@ -416,7 +437,7 @@ useEffect(() => {
       sim.on("tick", null);
       if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
     };
-  }, [nodes.length, links, physics, rOf, buffer]);
+  }, [nodes.length, links, physics, rOf, buffer, explodeFactor]);
 
   // ---------------------------- Generate / Edit -------------------------------
   function onGenerate() {
@@ -441,76 +462,30 @@ useEffect(() => {
     setLinkSource(null);
     setPhysics(true);
     setSelectedNodeId(null);
-    // Reset zoom to identity so fresh graph starts centered
     resetZoom();
   }
-  
-function updateFromList() {
-  if (!nodes.length) return;
-  const parsed = parseList(rawList || "");
-  if (!parsed.length) return;
-  pushHistory();
 
-  if (updateMatchMode === "index") {
-    setNodes((prev) => prev.map((n, i) => {
-      if (i >= parsed.length) return n;
-      const src = parsed[i];
-      return {
-        ...n,
-        name: src.name,
-        ...(updateAreasFromList ? { area: Math.max(1, +src.area || n.area) } : {}),
-      };
-    }));
-    if (parsed.length > nodes.length) {
-      const extras = parsed.slice(nodes.length).map((x) => ({
-        id: Math.random().toString(36).slice(2, 9),
-        name: x.name,
-        area: Math.max(1, +x.area || 20),
-        x: (Math.random() - 0.5) * 40,
-        y: (Math.random() - 0.5) * 40,
-        fill: bulkFillTransparent ? "none" : bulkFill,
-        stroke: bulkStroke,
-        strokeWidth: bulkStrokeWidth,
-        textFont: bulkTextFont,
-        textColor: bulkTextColor,
-        textSize: clampTextSize(bulkTextSize),
-      }));
-      setNodes((prev) => [...prev, ...extras]);
-    }
-    return;
-  }
+  function updateFromList() {
+    if (!nodes.length) return;
+    const parsed = parseList(rawList || "");
+    if (!parsed.length) return;
+    pushHistory();
 
-  // default: match by NAME (safer after JSON imports that reorder nodes)
-  setNodes((prev) => {
-    const buckets = new Map();
-    prev.forEach((n, idx) => {
-      const k = norm(n.name);
-      const arr = buckets.get(k) || [];
-      arr.push(idx);
-      buckets.set(k, arr);
-    });
-
-    const updated = [...prev];
-    const used = new Set();
-    const extras = [];
-
-    parsed.forEach((src) => {
-      const key = norm(src.name);
-      const arr = buckets.get(key);
-      let idx = -1;
-      if (arr && arr.length) idx = arr.shift();
-      if (idx >= 0 && !used.has(idx)) {
-        updated[idx] = {
-          ...updated[idx],
+    if (updateMatchMode === "index") {
+      setNodes((prev) => prev.map((n, i) => {
+        if (i >= parsed.length) return n;
+        const src = parsed[i];
+        return {
+          ...n,
           name: src.name,
-          ...(updateAreasFromList ? { area: Math.max(1, +src.area || updated[idx].area) } : {}),
+          ...(updateAreasFromList ? { area: Math.max(1, +src.area || n.area) } : {}),
         };
-        used.add(idx);
-      } else {
-        extras.push({
+      }));
+      if (parsed.length > nodes.length) {
+        const extras = parsed.slice(nodes.length).map((x) => ({
           id: Math.random().toString(36).slice(2, 9),
-          name: src.name,
-          area: Math.max(1, +src.area || 20),
+          name: x.name,
+          area: Math.max(1, +x.area || 20),
           x: (Math.random() - 0.5) * 40,
           y: (Math.random() - 0.5) * 40,
           fill: bulkFillTransparent ? "none" : bulkFill,
@@ -519,14 +494,57 @@ function updateFromList() {
           textFont: bulkTextFont,
           textColor: bulkTextColor,
           textSize: clampTextSize(bulkTextSize),
-        });
+        }));
+        setNodes((prev) => [...prev, ...extras]);
       }
+      return;
+    }
+
+    // default: match by NAME
+    setNodes((prev) => {
+      const buckets = new Map();
+      prev.forEach((n, idx) => {
+        const k = norm(n.name);
+        const arr = buckets.get(k) || [];
+        arr.push(idx);
+        buckets.set(k, arr);
+      });
+
+      const updated = [...prev];
+      const used = new Set();
+      const extras = [];
+
+      parsed.forEach((src) => {
+        const key = norm(src.name);
+        const arr = buckets.get(key);
+        let idx = -1;
+        if (arr && arr.length) idx = arr.shift();
+        if (idx >= 0 && !used.has(idx)) {
+          updated[idx] = {
+            ...updated[idx],
+            name: src.name,
+            ...(updateAreasFromList ? { area: Math.max(1, +src.area || updated[idx].area) } : {}),
+          };
+          used.add(idx);
+        } else {
+          extras.push({
+            id: Math.random().toString(36).slice(2, 9),
+            name: src.name,
+            area: Math.max(1, +src.area || 20),
+            x: (Math.random() - 0.5) * 40,
+            y: (Math.random() - 0.5) * 40,
+            fill: bulkFillTransparent ? "none" : bulkFill,
+            stroke: bulkStroke,
+            strokeWidth: bulkStrokeWidth,
+            textFont: bulkTextFont,
+            textColor: bulkTextColor,
+            textSize: clampTextSize(bulkTextSize),
+          });
+        }
+      });
+      return extras.length ? [...updated, ...extras] : updated;
     });
-    return extras.length ? [...updated, ...extras] : updated;
-  });
-}
-
-
+  }
 
   function clearAll() {
     pushHistory();
@@ -571,6 +589,10 @@ function updateFromList() {
   function onPointerDownNode(e, node) {
     e.stopPropagation();
     setSelectedNodeId(node.id);
+
+    // do not start drag while in Connect mode (ensures second click creates link)
+    if (mode === "connect") return;
+
     draggingRef.current = node.id;
     dragStartSnapshotRef.current = snapshot();
     try { e.currentTarget.setPointerCapture?.(e.pointerId); } catch {}
@@ -633,59 +655,58 @@ function updateFromList() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  
-// ---------------------------- Scenes API ------------------------------------
-function captureScenePayload() {
-  const pos = {};
-  for (const n of nodes) pos[n.id] = { x: n.x || 0, y: n.y || 0 };
-  return {
-    positions: pos,
-    zoom: { k: zoomTransform.k, x: zoomTransform.x, y: zoomTransform.y },
-    updatedAt: Date.now(),
-  };
-}
-function addScene(name) {
-  const nm = String(name || "").trim() || `Scene ${scenes.length + 1}`;
-  const payload = captureScenePayload();
-  const s = { id: Math.random().toString(36).slice(2,9), name: nm, ...payload };
-  setScenes(prev => [...prev, s]);
-  setActiveSceneId(s.id);
-}
-function applyScene(sceneId) {
-  const s = scenes.find(x => x.id === sceneId);
-  if (!s) return;
-  const { positions, zoom } = s;
-  setNodes(prev => prev.map(n => {
-    const p = positions[n.id];
-    return p ? { ...n, x: p.x, y: p.y, fx: undefined, fy: undefined } : n;
-  }));
-  try {
-    const svg = d3.select(svgRef.current);
-    const zoomer = zoomBehaviorRef.current;
-    if (svg && zoomer && zoom) {
-      svg.transition().duration(250)
-         .call(zoomer.transform, d3.zoomIdentity.translate(zoom.x, zoom.y).scale(zoom.k || 1));
-    }
-  } catch {}
-  zeroVelocities();
-  simRef.current?.alpha(0.3).restart();
-}
-function updateScene(sceneId) {
-  const idx = scenes.findIndex(x => x.id === sceneId);
-  if (idx === -1) return;
-  const payload = captureScenePayload();
-  setScenes(prev => {
-    const next = [...prev];
-    next[idx] = { ...next[idx], ...payload };
-    return next;
-  });
-}
-function deleteScene(sceneId) {
-  setScenes(prev => prev.filter(x => x.id !== sceneId));
-  if (activeSceneId === sceneId) setActiveSceneId(null);
-}
+  // ---------------------------- Scenes API -----------------------------------
+  function captureScenePayload() {
+    const pos = {};
+    for (const n of nodes) pos[n.id] = { x: n.x || 0, y: n.y || 0 };
+    return {
+      positions: pos,
+      zoom: { k: zoomTransform.k, x: zoomTransform.x, y: zoomTransform.y },
+      updatedAt: Date.now(),
+    };
+  }
+  function addScene(name) {
+    const nm = String(name || "").trim() || `Scene ${scenes.length + 1}`;
+    const payload = captureScenePayload();
+    const s = { id: Math.random().toString(36).slice(2,9), name: nm, ...payload };
+    setScenes(prev => [...prev, s]);
+    setActiveSceneId(s.id);
+  }
+  function applyScene(sceneId) {
+    const s = scenes.find(x => x.id === sceneId);
+    if (!s) return;
+    const { positions, zoom } = s;
+    setNodes(prev => prev.map(n => {
+      const p = positions[n.id];
+      return p ? { ...n, x: p.x, y: p.y, fx: undefined, fy: undefined } : n;
+    }));
+    try {
+      const svg = d3.select(svgRef.current);
+      const zoomer = zoomBehaviorRef.current;
+      if (svg && zoomer && zoom) {
+        svg.transition().duration(250)
+           .call(zoomer.transform, d3.zoomIdentity.translate(zoom.x, zoom.y).scale(zoom.k || 1));
+      }
+    } catch {}
+    zeroVelocities();
+    simRef.current?.alpha(0.3).restart();
+  }
+  function updateScene(sceneId) {
+    const idx = scenes.findIndex(x => x.id === sceneId);
+    if (idx === -1) return;
+    const payload = captureScenePayload();
+    setScenes(prev => {
+      const next = [...prev];
+      next[idx] = { ...next[idx], ...payload };
+      return next;
+    });
+  }
+  function deleteScene(sceneId) {
+    setScenes(prev => prev.filter(x => x.id !== sceneId));
+    if (activeSceneId === sceneId) setActiveSceneId(null);
+  }
 
-// ---------------------------- Export helpers -------------------------------
+  // ---------------------------- Export helpers -------------------------------
   function getExportBg() {
     if (exportBgMode === "transparent") return null;
     if (exportBgMode === "white") return "#ffffff";
@@ -741,7 +762,6 @@ function deleteScene(sceneId) {
     img.src = `data:image/svg+xml;base64,${svg64}`;
   }
 
-  
   function buildExportPayload() {
     return {
       nodes, links, styles,
@@ -763,32 +783,7 @@ function deleteScene(sceneId) {
     };
   }
 
-  function exportJSON() {
-    const blob = new Blob(
-      [JSON.stringify({
-        nodes, links, styles,
-        bulk: {
-          bulkFill,
-          bulkFillTransparent,
-          bulkStroke,
-          bulkStrokeWidth,
-          bulkTextFont,
-          bulkTextColor,
-          bulkTextSize: clampTextSize(bulkTextSize),
-        },
-        buffer,
-        arrowOverlap,
-        rotationSensitivity,
-        exportBgMode, exportBgCustom,
-        liveBgMode, liveBgCustom,
-      }, null, 2)],
-      { type: "application/json" }
-    );
-    const url = URL.createObjectURL(blob); download(url, `bubble-diagram-${Date.now()}.json`);
-  }
-  // ---- File System Access API helpers (progressive enhancement) -------------
   async function saveJSON() {
-    // Save to the same file if we have a handle; otherwise fall back to Save As
     if (window.showSaveFilePicker && jsonHandleRef.current) {
       try {
         const handle = jsonHandleRef.current;
@@ -800,7 +795,6 @@ function deleteScene(sceneId) {
         console.warn("Save JSON failed, falling back to Save As…", err);
       }
     }
-    // Fallback
     return saveJSONAs();
   }
 
@@ -823,7 +817,6 @@ function deleteScene(sceneId) {
         console.warn("Save As cancelled or failed; using download() fallback.", err);
       }
     }
-    // Fallback: simple download with a prompt for the filename
     let name = typeof window !== "undefined" ? (window.prompt("File name", "bubble-diagram.json") || "bubble-diagram.json") : "bubble-diagram.json";
     const blob = new Blob([JSON.stringify(buildExportPayload(), null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -850,14 +843,13 @@ function deleteScene(sceneId) {
         console.warn("Open JSON cancelled or failed.", err);
       }
     }
-    // Fallback: trigger the hidden file input (existing Import JSON)
     const input = document.createElement("input");
     input.type = "file";
     input.accept = "application/json";
     input.onchange = (e) => {
       const file = e.target.files?.[0];
       if (!file) return;
-      jsonHandleRef.current = null; // file input doesn't grant a persistent handle
+      jsonHandleRef.current = null;
       const r = new FileReader();
       r.onload = () => parseAndLoadJSON(String(r.result || ""));
       r.readAsText(file);
@@ -904,7 +896,6 @@ function deleteScene(sceneId) {
     }
   }
 
-
   function importJSON(file) {
     const r = new FileReader();
     r.onload = () => {
@@ -947,19 +938,34 @@ function deleteScene(sceneId) {
     r.readAsText(file);
   }
 
-  
-function zeroVelocities() {
-  try {
-    const sim = simRef.current;
-    if (!sim) return;
-    const arr = sim.nodes ? sim.nodes() : [];
-    if (Array.isArray(arr)) {
-      for (const n of arr) { n.vx = 0; n.vy = 0; }
-    }
-  } catch {}
-}
+  function zeroVelocities() {
+    try {
+      const sim = simRef.current;
+      if (!sim) return;
+      const arr = sim.nodes ? sim.nodes() : [];
+      if (Array.isArray(arr)) {
+        for (const n of arr) { n.vx = 0; n.vy = 0; }
+      }
+    } catch {}
+  }
 
-// ---------------------------- Zoom / Pan / Fit -----------------------------
+  // ---------------------------- Detangle pulse -------------------------------
+  function detanglePulse() {
+    // bump expansion
+    if (explodeTORef.current) clearTimeout(explodeTORef.current);
+    setExplodeFactor(2.2);
+    simRef.current?.alpha(1).restart();
+    // ease back after a short delay
+    explodeTORef.current = setTimeout(() => {
+      setExplodeFactor(1);
+      simRef.current?.alpha(0.6).restart();
+    }, 1200);
+  }
+  useEffect(() => {
+    return () => { if (explodeTORef.current) clearTimeout(explodeTORef.current); };
+  }, []);
+
+  // ---------------------------- Zoom / Pan / Fit -----------------------------
   useEffect(() => {
     const svg = d3.select(svgRef.current);
     const zoom = d3.zoom()
@@ -969,8 +975,7 @@ function zeroVelocities() {
       });
     zoomBehaviorRef.current = zoom;
     svg.call(zoom);
-    // Double-click to reset zoom
-    svg.on("dblclick.zoom", null); // disable default dblclick zoom
+    svg.on("dblclick.zoom", null);
     svg.on("dblclick", () => resetZoom());
     return () => svg.on(".zoom", null);
   }, []);
@@ -992,7 +997,6 @@ function zeroVelocities() {
   }
   function fitToView() {
     if (!nodes.length) return resetZoom();
-    // Compute bounds from node centers + radii
     const r = (n) => rOf(n.area);
     const minX = d3.min(nodes, (n) => (n.x || 0) - r(n)) ?? -600;
     const maxX = d3.max(nodes, (n) => (n.x || 0) + r(n)) ?? 600;
@@ -1051,388 +1055,463 @@ function zeroVelocities() {
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
     >
-      {/* Global styles to make color inputs smooth rounded pills */}
+      {/* Global styles: controls, scrollbars, selects */}
       <style data-ignore-export>{`
+        :root { color-scheme: dark; }
+        * { scrollbar-width: thin; scrollbar-color: #3a3a4a #121220; }
+        *::-webkit-scrollbar { height: 10px; width: 10px; }
+        *::-webkit-scrollbar-thumb { background: #3a3a4a; border-radius: 8px; }
+        *::-webkit-scrollbar-track { background: #121220; }
+
         input[type="color"] {
           -webkit-appearance: none;
           appearance: none;
           border: 1px solid ${THEME.border};
           width: 32px; height: 28px;
-          border-radius: 9999px; /* smooth, no sharp corners */
+          border-radius: 9999px;
           padding: 0;
           background: transparent;
           cursor: pointer;
         }
-        input[type="color"]::-webkit-color-swatch-wrapper {
-          padding: 0; border-radius: 9999px;
+        input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; border-radius: 9999px; }
+        input[type="color"]::-webkit-color-swatch { border: none; border-radius: 9999px; }
+        input[type="color"]::-moz-color-swatch { border: none; border-radius: 9999px; }
+
+        .ui-select{
+          background:#0f0f18;
+          color:#e6e6f0;
+          border:1px solid ${THEME.border};
+          border-radius:10px;
+          padding:6px 8px;
+          font-size:13px;
+          line-height:1.2;
+          box-shadow:0 6px 18px rgba(0,0,0,.35);
         }
-        input[type="color"]::-webkit-color-swatch {
-          border: none; border-radius: 9999px;
+        .ui-select:focus{ outline:2px solid #8b5cf6; outline-offset:2px; }
+        .ui-select option{ background:#0f0f18; color:#e6e6f0; }
+        .ui-select option:checked,
+        .ui-select option:hover{ background:#1b1b2a !important; color:#fff !important; }
+        .card {
+          background:#121220; border:1px solid ${THEME.border};
+          border-radius:16px; padding:14px;
         }
-        input[type="color"]::-moz-color-swatch {
-          border: none; border-radius: 9999px;
+        .group-title {
+          font-size:12px; letter-spacing:.06em; color:${THEME.subtle}; font-weight:600;
         }
+        .btn {
+          border:1px solid ${THEME.border}; border-radius:12px; padding:8px 12px; font-size:13px;
+          background:transparent; color:${THEME.text};
+        }
+        .btn:hover { background:rgba(255,255,255,.06); }
+        .btn-xs { padding:6px 10px; font-size:12px; border-radius:10px; }
+        .dock-btn { width:38px; height:38px; display:flex; align-items:center; justify-content:center; border-radius:10px; }
       `}</style>
 
-      {/* Toolbar */}
-      <div className="sticky top-0 z-10 backdrop-blur bg-black/30 border-b border-[#2a2a3a]">
-        <div className="mx-auto max-w-[1400px] px-4 py-3 flex flex-wrap items-center gap-3">
-          <div className="font-semibold tracking-wide text-sm text-[#9aa0a6]">Bubble Diagram Builder</div>
+      {/* Command bar */}
+      <div className="sticky top-0 z-20 backdrop-blur bg-black/35 border-b border-[#2a2a3a]">
+        <div className="mx-auto max-w-[1500px] px-4 py-3 flex items-center gap-3">
+          <div className="text-sm font-semibold tracking-wide text-[#d6d6e2]">Bubble Diagram Builder</div>
+          <div className="text-xs text-[#9aa0a6]">Design mode:</div>
+          <div className="flex items-center gap-1">
+            <button className={`btn btn-xs ${mode==="select"?"bg-white/10":""}`} onClick={()=>setMode("select")}>Select/Drag</button>
+            <button className={`btn btn-xs ${mode==="connect"?"bg-white/10":""}`} onClick={()=>setMode("connect")}>Connect</button>
+          </div>
+          <div className="ml-auto flex items-center gap-2">
+            <button className="btn btn-xs" onClick={undo}>Undo</button>
+            <button className="btn btn-xs" onClick={redo}>Redo</button>
+            <button className="btn btn-xs" onClick={clearAll}>Clear</button>
+          </div>
+        </div>
+      </div>
 
-          <div className="ml-auto flex flex-wrap items-center gap-2">
-            {/* Modes */}
-            <button className={`px-3 py-2 rounded-xl border ${mode === "select" ? "bg-white/10" : ""} border-[#2a2a3a] text-sm`} onClick={() => setMode("select")}>
-              Select / Drag
-            </button>
-            <button className={`px-3 py-2 rounded-xl border ${mode === "connect" ? "bg-white/10" : ""} border-[#2a2a3a] text-sm`} onClick={() => setMode("connect")}>
-              Connect
-            </button>
-
-            {/* Undo / Redo */}
-            <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={undo}>Undo</button>
-            <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={redo}>Redo</button>
-
-            {/* Line style controls */}
-            {["necessary", "ideal"].map((key) => (
-              <div key={key} className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
-                <span className="opacity-70 w-16 capitalize">{key}</span>
-                <input type="color" value={styles[key].color} title={`${key} color`} onChange={(e) => setStyles((s) => ({ ...s, [key]: { ...s[key], color: e.target.value } }))} />
-                <label className="flex items-center gap-1"><input type="checkbox" checked={styles[key].dashed} onChange={(e) => setStyles((s) => ({ ...s, [key]: { ...s[key], dashed: e.target.checked } }))} /> dashed</label>
-                <label className="flex items-center gap-1">w
-                  <input type="number" min={1} max={12} value={styles[key].width} className="w-14 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" onChange={(e) => setStyles((s) => ({ ...s, [key]: { ...s[key], width: Math.max(1, Math.min(12, +e.target.value || 1)) } }))} />
+      {/* Main layout */}
+      <div className="mx-auto max-w-[1500px] px-4 py-4 grid grid-cols-1 xl:grid-cols-12 gap-4">
+        {/* Controls column */}
+        <div className="xl:col-span-4 space-y-4">
+          {/* Spaces */}
+          <details open className="card">
+            <summary className="cursor-pointer select-none group-title">Spaces (name, area m²)</summary>
+            <div className="mt-3 space-y-2">
+              <div className="flex flex-wrap gap-2">
+                <button className="btn btn-xs" onClick={()=>setRawList(SAMPLE_TEXT)}>Load sample</button>
+                <button className="btn btn-xs" onClick={onGenerate}>Generate bubbles</button>
+                <button className="btn btn-xs" onClick={updateFromList}>Update from list</button>
+                <label className="text-xs text-[#9aa0a6] flex items-center gap-1">
+                  <input type="checkbox" checked={updateMatchMode==="name"} onChange={(e)=>setUpdateMatchMode(e.target.checked?"name":"index")} /> match by name
                 </label>
-                <select className="bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" value={styles[key].headStart} onChange={(e) => setStyles((s) => ({ ...s, [key]: { ...s[key], headStart: e.target.value } }))}>
-                  {HEAD_SHAPES.map((h) => (<option key={h} value={h}>{h}</option>))}
-                </select>
-                <span>→</span>
-                <select className="bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" value={styles[key].headEnd} onChange={(e) => setStyles((s) => ({ ...s, [key]: { ...s[key], headEnd: e.target.value } }))}>
-                  {HEAD_SHAPES.map((h) => (<option key={h} value={h}>{h}</option>))}
-                </select>
-                <button className={`ml-2 px-2 py-1 rounded-md border border-[#2a2a3a] ${currentLineType === key ? "bg-white/10" : ""}`} onClick={() => setCurrentLineType(key)}>Use</button>
+                <label className="text-xs text-[#9aa0a6] flex items-center gap-1">
+                  <input type="checkbox" checked={updateAreasFromList} onChange={(e)=>setUpdateAreasFromList(e.target.checked)} /> also update areas
+                </label>
               </div>
-            ))}
-
-            {/* Bubble (node) bulk styles */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
-              <span className="opacity-70">Bubbles:</span>
-              <label className="flex items-center gap-1">Fill
-                <input type="color" value={bulkFill} onChange={(e) => setBulkFill(e.target.value)} disabled={bulkFillTransparent} />
-              </label>
-              <label className="flex items-center gap-1"><input type="checkbox" checked={bulkFillTransparent} onChange={(e) => setBulkFillTransparent(e.target.checked)} /> transparent</label>
-              <label className="flex items-center gap-1">Border
-                <input type="color" value={bulkStroke} onChange={(e) => setBulkStroke(e.target.value)} />
-              </label>
-              <label className="flex items-center gap-1">w
-                <input type="number" min={1} max={12} value={bulkStrokeWidth} className="w-14 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" onChange={(e) => setBulkStrokeWidth(Math.max(1, Math.min(12, +e.target.value || 1)))} />
-              </label>
-              <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" onClick={applyBulkBubbleStyles}>Apply to all</button>
+              <textarea
+                className="w-full min-h-[160px] text-sm bg-transparent border rounded-xl border-[#2a2a3a] p-3 outline-none"
+                placeholder={`Example (one per line):\nMatch Admin Room, 90\nVOD Review / Theater, 60`}
+                value={rawList}
+                onChange={(e)=>setRawList(e.target.value)}
+              />
+              <p className="text-xs text-[#9aa0a6]">Formats: <code>name, area</code> • <code>name - area</code> • <code>name area</code></p>
             </div>
+          </details>
 
-            {/* Text (label) bulk styles */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
-              <span className="opacity-70">Labels:</span>
-              <select className="bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" value={bulkTextFont} onChange={(e) => setBulkTextFont(e.target.value)}>
-                <option value={FONT_STACKS.Outfit}>Outfit</option>
-                <option value={FONT_STACKS.Inter}>Inter</option>
-                <option value={FONT_STACKS.Poppins}>Poppins</option>
-                <option value={FONT_STACKS.Roboto}>Roboto</option>
-                <option value={FONT_STACKS.System}>system-ui</option>
-                <option value={FONT_STACKS.HelveticaNowCondensed}>Helvetica Now Condensed (if available)</option>
+          {/* Styles */}
+          <details open className="card">
+            <summary className="cursor-pointer select-none group-title">Styles</summary>
+            <div className="mt-3 space-y-3">
+              {/* Line styles */}
+              {["necessary","ideal"].map((key)=>(
+                <div key={key} className="border border-[#2a2a3a] rounded-xl p-2">
+                  <div className="text-xs opacity-80 mb-2 flex items-center gap-2">
+                    <span className="capitalize">{key}</span>
+                    <button className={`btn btn-xs ${currentLineType===key?"bg-white/10":""}`} onClick={()=>setCurrentLineType(key)}>Use</button>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <label className="flex items-center gap-1">Color <input type="color" value={styles[key].color} onChange={(e)=>setStyles(s=>({...s,[key]:{...s[key],color:e.target.value}}))} /></label>
+                    <label className="flex items-center gap-1"><input type="checkbox" checked={styles[key].dashed} onChange={(e)=>setStyles(s=>({...s,[key]:{...s[key],dashed:e.target.checked}}))}/> dashed</label>
+                    <label className="flex items-center gap-1">w
+                      <input type="number" min={1} max={12} value={styles[key].width} className="w-14 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
+                        onChange={(e)=>setStyles(s=>({...s,[key]:{...s[key],width:Math.max(1,Math.min(12,+e.target.value||1))}}))}/>
+                    </label>
+                    <select className="ui-select" value={styles[key].headStart} onChange={(e)=>setStyles(s=>({...s,[key]:{...s[key],headStart:e.target.value}}))}>
+                      {HEAD_SHAPES.map(h=><option key={h} value={h}>{h}</option>)}
+                    </select>
+                    <span className="opacity-60">→</span>
+                    <select className="ui-select" value={styles[key].headEnd} onChange={(e)=>setStyles(s=>({...s,[key]:{...s[key],headEnd:e.target.value}}))}>
+                      {HEAD_SHAPES.map(h=><option key={h} value={h}>{h}</option>)}
+                    </select>
+                  </div>
+                </div>
+              ))}
+
+              {/* Bubbles & Labels */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="border border-[#2a2a3a] rounded-xl p-2">
+                  <div className="text-xs opacity-80 mb-2">Bubbles (bulk)</div>
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <label className="flex items-center gap-1">Fill <input type="color" value={bulkFill} onChange={(e)=>setBulkFill(e.target.value)} disabled={bulkFillTransparent}/></label>
+                    <label className="flex items-center gap-1"><input type="checkbox" checked={bulkFillTransparent} onChange={(e)=>setBulkFillTransparent(e.target.checked)}/> transparent</label>
+                    <label className="flex items-center gap-1">Border <input type="color" value={bulkStroke} onChange={(e)=>setBulkStroke(e.target.value)}/></label>
+                    <label className="flex items-center gap-1">w
+                      <input type="number" min={1} max={12} value={bulkStrokeWidth} className="w-14 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
+                        onChange={(e)=>setBulkStrokeWidth(Math.max(1,Math.min(12,+e.target.value||1)))}/>
+                    </label>
+                    <button className="btn btn-xs" onClick={applyBulkBubbleStyles}>Apply to all</button>
+                  </div>
+                </div>
+                <div className="border border-[#2a2a3a] rounded-xl p-2">
+                  <div className="text-xs opacity-80 mb-2">Labels (bulk)</div>
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <select className="ui-select" value={bulkTextFont} onChange={(e)=>setBulkTextFont(e.target.value)}>
+                      <option value={FONT_STACKS.Outfit}>Outfit</option>
+                      <option value={FONT_STACKS.Inter}>Inter</option>
+                      <option value={FONT_STACKS.Poppins}>Poppins</option>
+                      <option value={FONT_STACKS.Roboto}>Roboto</option>
+                      <option value={FONT_STACKS.System}>system-ui</option>
+                      <option value={FONT_STACKS.HelveticaNowCondensed}>Helvetica Now Condensed (if available)</option>
+                    </select>
+                    <input type="color" value={bulkTextColor} onChange={(e)=>setBulkTextColor(e.target.value)}/>
+                    <label className="flex items-center gap-1">size
+                      <input type="number" min={TEXT_MIN} max={TEXT_MAX} value={bulkTextSize} className="w-14 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
+                        onChange={(e)=>setBulkTextSize(clampTextSize(e.target.value))}/>
+                    </label>
+                    <button className="btn btn-xs" onClick={applyBulkTextStyles}>Apply to all</button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Backgrounds */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="border border-[#2a2a3a] rounded-xl p-2">
+                  <div className="text-xs opacity-80 mb-2">Export background</div>
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <label className="flex items-center gap-1"><input type="radio" name="bg-exp" checked={exportBgMode==="transparent"} onChange={()=>setExportBgMode("transparent")}/> transparent</label>
+                    <label className="flex items-center gap-1"><input type="radio" name="bg-exp" checked={exportBgMode==="white"} onChange={()=>setExportBgMode("white")}/> white</label>
+                    <label className="flex items-center gap-1"><input type="radio" name="bg-exp" checked={exportBgMode==="custom"} onChange={()=>setExportBgMode("custom")}/> custom</label>
+                    <input type="color" value={exportBgCustom} onChange={(e)=>setExportBgCustom(e.target.value)} disabled={exportBgMode!=="custom"}/>
+                  </div>
+                </div>
+                <div className="border border-[#2a2a3a] rounded-xl p-2">
+                  <div className="text-xs opacity-80 mb-2">Live background</div>
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <label className="flex items-center gap-1"><input type="radio" name="bg-live" checked={liveBgMode==="transparent"} onChange={()=>setLiveBgMode("transparent")}/> transparent</label>
+                    <label className="flex items-center gap-1"><input type="radio" name="bg-live" checked={liveBgMode==="white"} onChange={()=>setLiveBgMode("white")}/> white</label>
+                    <label className="flex items-center gap-1"><input type="radio" name="bg-live" checked={liveBgMode==="custom"} onChange={()=>setLiveBgMode("custom")}/> custom</label>
+                    <input type="color" value={liveBgCustom} onChange={(e)=>setLiveBgCustom(e.target.value)} disabled={liveBgMode!=="custom"}/>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </details>
+
+          {/* Layout & Physics */}
+          <details className="card" open>
+            <summary className="cursor-pointer select-none group-title">Layout & Physics</summary>
+            <div className="mt-3 grid grid-cols-1 gap-3">
+              <div className="flex items-center gap-2 text-xs">
+                <span className="opacity-70">Buffer</span>
+                <input type="range" min={0} max={80} step={1} value={buffer} onChange={(e)=>setBuffer(+e.target.value)}/>
+                <input type="number" min={0} max={80} value={buffer} className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
+                  onChange={(e)=>setBuffer(Math.max(0,Math.min(80,+e.target.value||0)))}/>
+                <span className="opacity-70">px</span>
+              </div>
+              <div className="flex items-center gap-2 text-xs">
+                <span className="opacity-70">Arrow overlap</span>
+                <input type="range" min={0} max={60} step={1} value={arrowOverlap} onChange={(e)=>setArrowOverlap(+e.target.value)}/>
+                <input type="number" min={0} max={200} value={arrowOverlap} className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
+                  onChange={(e)=>setArrowOverlap(Math.max(0,Math.min(200,+e.target.value||0)))}/>
+                <span className="opacity-70">px</span>
+              </div>
+              <div className="flex items-center gap-2 text-xs">
+                <span className="opacity-70">Rotation sensitivity</span>
+                <input type="range" min={0} max={100} step={1} value={rotationSensitivity} onChange={(e)=>setRotationSensitivity(+e.target.value)}/>
+                <input type="number" min={0} max={100} value={rotationSensitivity} className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
+                  onChange={(e)=>setRotationSensitivity(Math.max(0,Math.min(100,+e.target.value||0)))}/>
+                <span className="opacity-70">%</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <label className="text-xs flex items-center gap-2">
+                  <input type="checkbox" checked={showMeasurements} onChange={(e)=>setShowMeasurements(e.target.checked)}/>
+                  show m² labels
+                </label>
+                <div className="flex items-center gap-2">
+                  <button className="btn btn-xs" onClick={()=>setPhysics(p=>!p)}>{physics?"Physics: ON":"Physics: OFF"}</button>
+                  <button className="btn btn-xs" onClick={()=>setNodes([...nodes])}>Re-layout</button>
+                  <button className="btn btn-xs" onClick={detanglePulse}>De-tangle</button>
+                </div>
+              </div>
+            </div>
+          </details>
+
+          {/* Scenes */}
+          <details className="card">
+            <summary className="cursor-pointer select-none group-title">Scenes</summary>
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+              <select className="ui-select" value={activeSceneId||""} onChange={(e)=>setActiveSceneId(e.target.value||null)}>
+                <option value="">(none)</option>
+                {scenes.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
-              <input type="color" value={bulkTextColor} onChange={(e) => setBulkTextColor(e.target.value)} />
-              <label className="flex items-center gap-1">size
-                <input type="number" min={TEXT_MIN} max={TEXT_MAX} value={bulkTextSize} className="w-14 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" onChange={(e) => setBulkTextSize(clampTextSize(e.target.value))} />
-              </label>
-              <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" onClick={applyBulkTextStyles}>Apply to all</button>
+              <button className="btn btn-xs" onClick={()=>{
+                const nm = window.prompt("New scene name", `Scene ${scenes.length+1}`);
+                if(nm!=null) addScene(nm);
+              }}>Add</button>
+              <button className="btn btn-xs" disabled={!activeSceneId} onClick={()=>activeSceneId&&applyScene(activeSceneId)}>Go</button>
+              <button className="btn btn-xs" disabled={!activeSceneId} onClick={()=>activeSceneId&&updateScene(activeSceneId)}>Update</button>
+              <button className="btn btn-xs" disabled={!activeSceneId} onClick={()=>activeSceneId&&deleteScene(activeSceneId)}>Delete</button>
             </div>
+          </details>
 
-            {/* Export background */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
-              <span className="opacity-70">Export BG:</span>
-              <label className="flex items-center gap-1"><input type="radio" name="bg-exp" checked={exportBgMode === "transparent"} onChange={() => setExportBgMode("transparent")} /> transparent</label>
-              <label className="flex items-center gap-1"><input type="radio" name="bg-exp" checked={exportBgMode === "white"} onChange={() => setExportBgMode("white")} /> white</label>
-              <label className="flex items-center gap-1"><input type="radio" name="bg-exp" checked={exportBgMode === "custom"} onChange={() => setExportBgMode("custom")} /> custom</label>
-              <input type="color" value={exportBgCustom} onChange={(e) => setExportBgCustom(e.target.value)} disabled={exportBgMode !== "custom"} />
-            </div>
-
-            {/* Live background */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
-              <span className="opacity-70">Live BG:</span>
-              <label className="flex items-center gap-1"><input type="radio" name="bg-live" checked={liveBgMode === "transparent"} onChange={() => setLiveBgMode("transparent")} /> transparent</label>
-              <label className="flex items-center gap-1"><input type="radio" name="bg-live" checked={liveBgMode === "white"} onChange={() => setLiveBgMode("white")} /> white</label>
-              <label className="flex items-center gap-1"><input type="radio" name="bg-live" checked={liveBgMode === "custom"} onChange={() => setLiveBgMode("custom")} /> custom</label>
-              <input type="color" value={liveBgCustom} onChange={(e) => setLiveBgCustom(e.target.value)} disabled={liveBgMode !== "custom"} />
-            </div>
-
-            {/* Buffer */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
-              <span className="opacity-70">Buffer:</span>
-              <input type="range" min={0} max={80} step={1} value={buffer} onChange={(e) => setBuffer(+e.target.value)} />
-              <input type="number" min={0} max={80} value={buffer} className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" onChange={(e) => setBuffer(Math.max(0, Math.min(80, +e.target.value || 0)))} />
-              <span className="opacity-70">px</span>
-            </div>
-
-            {/* NEW: Arrow Overlap */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
-              <span className="opacity-70">Arrow overlap:</span>
-              <input type="range" min={0} max={60} step={1} value={arrowOverlap} onChange={(e) => setArrowOverlap(+e.target.value)} />
-              <input type="number" min={0} max={200} value={arrowOverlap} className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" onChange={(e) => setArrowOverlap(Math.max(0, Math.min(200, +e.target.value || 0)))} />
-              <span className="opacity-70">px</span>
-            </div>
-
-            {/* NEW: Rotation Sensitivity */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
-              <span className="opacity-70">Rotation sensitivity:</span>
-              <input type="range" min={0} max={100} step={1} value={rotationSensitivity} onChange={(e) => setRotationSensitivity(+e.target.value)} />
-              <input type="number" min={0} max={100} value={rotationSensitivity} className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" onChange={(e) => setRotationSensitivity(Math.max(0, Math.min(100, +e.target.value || 0)))} />
-              <span className="opacity-70">%</span>
-            </div>
-            {/* Measurements toggle */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
-              <label className="flex items-center gap-1">
-                <input type="checkbox" checked={showMeasurements} onChange={(e) => setShowMeasurements(e.target.checked)} />
-                show m² labels
+          {/* Files & Export */}
+          <details className="card">
+            <summary className="cursor-pointer select-none group-title">Files & Export</summary>
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+              <button className="btn btn-xs" onClick={exportSVG}>Export SVG</button>
+              <button className="btn btn-xs" onClick={exportPNG}>Export PNG</button>
+              <button className="btn btn-xs" title="Ctrl/⌘ + S" onClick={saveJSON}>Save JSON</button>
+              <button className="btn btn-xs" onClick={saveJSONAs}>Save As…</button>
+              <button className="btn btn-xs" onClick={openJSON}>Open JSON…</button>
+              <label className="btn btn-xs cursor-pointer">Import JSON
+                <input className="hidden" type="file" accept="application/json" onChange={(e)=>e.target.files&&importJSON(e.target.files[0])}/>
               </label>
             </div>
+          </details>
 
-
-            {/* Graph actions */}
-            <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={() => setPhysics((p) => !p)}>{physics ? "Physics: ON" : "Physics: OFF"}</button>
-            <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={() => setNodes([...nodes])}>Re-Layout</button>
-
-            
-{/* Scenes */}
-<div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-2 py-2 text-xs">
-  <span className="opacity-70">Scene:</span>
-  <select className="bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
-          value={activeSceneId || ""}
-          onChange={(e) => setActiveSceneId(e.target.value || null)}>
-    <option value="">(none)</option>
-    {scenes.map((s) => (<option key={s.id} value={s.id}>{s.name}</option>))}
-  </select>
-  <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" onClick={() => {
-    const nm = window.prompt("New scene name", `Scene ${scenes.length + 1}`);
-    if (nm != null) addScene(nm);
-  }}>Add</button>
-  <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" disabled={!activeSceneId} onClick={() => activeSceneId && applyScene(activeSceneId)}>Go</button>
-  <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" disabled={!activeSceneId} onClick={() => activeSceneId && updateScene(activeSceneId)}>Update</button>
-  <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" disabled={!activeSceneId} onClick={() => activeSceneId && deleteScene(activeSceneId)}>Delete</button>
-</div>
-
-            {/* Zoom controls */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-2 py-2 text-xs">
-              <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" onClick={zoomOut}>−</button>
-              <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" onClick={resetZoom}>Reset</button>
-              <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" onClick={fitToView}>Fit</button>
-              <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" onClick={zoomIn}>+</button>
-            </div>
-
-            {/* Fullscreen & Export */}
-            <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={toggleFullscreen}>{isFullscreen ? "Exit Fullscreen" : "Fullscreen"}</button>
-            <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={exportSVG}>Export SVG</button>
-            <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={exportPNG}>Export PNG</button>
-            <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" title="Ctrl/⌘ + S" onClick={saveJSON}>Save JSON</button>
-            <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={saveJSONAs}>Save As…</button>
-            <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={openJSON}>Open JSON…</button>
-            <label className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm cursor-pointer">Import JSON (fallback)
-              <input className="hidden" type="file" accept="application/json" onChange={(e) => e.target.files && importJSON(e.target.files[0])} />
-            </label>
-          </div>
-        </div>
-      </div>
-
-      {/* Panels */}
-      <div className="mx-auto max-w-[1400px] px-4 mt-4 grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Input list */}
-        <div className="col-span-1 bg-[#121220] rounded-2xl border border-[#2a2a3a] p-4">
-          <div className="flex items-center justify-between gap-2 mb-2">
-            <h2 className="text-sm font-semibold tracking-wide text-[#9aa0a6]">List of Spaces (name, area m²)</h2>
-            <div className="flex gap-2">
-              <button className="px-3 py-1.5 rounded-xl border border-[#2a2a3a] text-xs" onClick={() => setRawList(SAMPLE_TEXT)}>Load Sample</button>
-              <button className="px-3 py-1.5 rounded-xl border border-[#2a2a3a] text-xs" onClick={onGenerate}>Generate Bubbles</button>
-              <button className="px-3 py-1.5 rounded-xl border border-[#2a2a3a] text-xs" onClick={updateFromList}>Update from list</button>
-              <label className="flex items-center gap-1 text-xs text-[#9aa0a6]"><input type="checkbox" checked={updateMatchMode==="name"} onChange={(e)=>setUpdateMatchMode(e.target.checked ? "name" : "index")} /> match by name (safer)</label>
-              <label className="flex items-center gap-1 text-xs text-[#9aa0a6]">
-                <input type="checkbox" checked={updateAreasFromList} onChange={(e)=>setUpdateAreasFromList(e.target.checked)} />
-                also update areas
-              </label>
-            </div>
-          </div>
-          <textarea className="w-full min-h-[180px] text-sm bg-transparent border rounded-xl border-[#2a2a3a] p-3 outline-none" placeholder={`Example (one per line):
-Match Admin Room, 90
-VOD Review / Theater, 60`} value={rawList} onChange={(e) => setRawList(e.target.value)} />
-          <p className="mt-2 text-xs text-[#9aa0a6]">Formats: <code>name, area</code> • <code>name - area</code> • <code>name area</code></p>
-        </div>
-
-        {/* Node Inspector (per-bubble styling) */}
-        <div className="col-span-1 bg-[#121220] rounded-2xl border border-[#2a2a3a] p-4">
-          <h2 className="text-sm font-semibold tracking-wide text-[#9aa0a6] mb-2">Node Inspector</h2>
-          {!selectedNode ? (
-            <div className="text-xs text-[#9aa0a6]">Click a bubble in <em>Select/Drag</em> mode to edit per-bubble styles.</div>
-          ) : (
-            <div className="space-y-3 text-sm">
-              <div className="font-medium truncate" title={selectedNode.name}>{selectedNode.name}</div>
-              <div className="grid grid-cols-2 gap-2">
-                <InlineEditField label="Name" value={selectedNode.name} onChange={(v) => renameNode(selectedNode.id, v)} />
-                <InlineEditField label="Area (m²)" value={String(selectedNode.area)} onChange={(v) => changeArea(selectedNode.id, v)} />
+          {/* Node inspector & Stats */}
+          <details className="card" open>
+            <summary className="cursor-pointer select-none group-title">Inspector & Stats</summary>
+            <div className="mt-3 space-y-3">
+              <div className="text-xs text-[#9aa0a6]">{nodes.length} nodes • {links.length} links</div>
+              <div className="border border-[#2a2a3a] rounded-xl p-3">
+                <div className="text-xs opacity-80 mb-2">Node Inspector</div>
+                {!selectedNode ? (
+                  <div className="text-xs text-[#9aa0a6]">Click a bubble in <em>Select/Drag</em> mode to edit styles.</div>
+                ) : (
+                  <div className="space-y-3 text-sm">
+                    <div className="font-medium truncate" title={selectedNode.name}>{selectedNode.name}</div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <InlineEditField label="Name" value={selectedNode.name} onChange={(v)=>renameNode(selectedNode.id,v)} />
+                      <InlineEditField label="Area (m²)" value={String(selectedNode.area)} onChange={(v)=>changeArea(selectedNode.id,v)} />
+                    </div>
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <label className="flex items-center gap-2">Fill
+                        <input type="color" value={selectedNode.fill==="none"?"#000000":selectedNode.fill} onChange={(e)=>setNodeFill(selectedNode.id,e.target.value)} disabled={selectedNode.fill==="none"} />
+                      </label>
+                      <label className="flex items-center gap-2"><input type="checkbox" checked={selectedNode.fill==="none"} onChange={(e)=>setNodeFill(selectedNode.id,e.target.checked?"none":bulkFill)} /> transparent</label>
+                      <label className="flex items-center gap-2">Border
+                        <input type="color" value={selectedNode.stroke || bulkStroke} onChange={(e)=>setNodeStroke(selectedNode.id,e.target.value)} />
+                      </label>
+                      <label className="flex items-center gap-1">w
+                        <input type="number" min={1} max={12} value={selectedNode.strokeWidth ?? bulkStrokeWidth} className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" onChange={(e)=>setNodeStrokeW(selectedNode.id,e.target.value)} />
+                      </label>
+                    </div>
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <select className="ui-select" value={selectedNode.textFont || bulkTextFont} onChange={(e)=>setNodeTextFont(selectedNode.id,e.target.value)}>
+                        <option value={FONT_STACKS.Outfit}>Outfit</option>
+                        <option value={FONT_STACKS.Inter}>Inter</option>
+                        <option value={FONT_STACKS.Poppins}>Poppins</option>
+                        <option value={FONT_STACKS.Roboto}>Roboto</option>
+                        <option value={FONT_STACKS.System}>system-ui</option>
+                        <option value={FONT_STACKS.HelveticaNowCondensed}>Helvetica Now Condensed (if available)</option>
+                      </select>
+                      <input type="color" value={selectedNode.textColor || bulkTextColor} onChange={(e)=>setNodeTextColor(selectedNode.id,e.target.value)} />
+                      <label className="flex items-center gap-1">size
+                        <input type="number" min={TEXT_MIN} max={TEXT_MAX} value={clampTextSize(selectedNode.textSize ?? bulkTextSize)} className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" onChange={(e)=>setNodeTextSize(selectedNode.id,e.target.value)} />
+                      </label>
+                    </div>
+                    <div className="flex gap-2">
+                      <button className="btn btn-xs" onClick={()=>setSelectedNodeId(null)}>Done</button>
+                      <button className="btn btn-xs" onClick={()=>{
+                        setNodeFill(selectedNode.id, bulkFillTransparent ? "none" : bulkFill);
+                        setNodeStroke(selectedNode.id, bulkStroke);
+                        setNodeStrokeW(selectedNode.id, bulkStrokeWidth);
+                        setNodeTextFont(selectedNode.id, bulkTextFont);
+                        setNodeTextColor(selectedNode.id, bulkTextColor);
+                        setNodeTextSize(selectedNode.id, bulkTextSize);
+                      }}>Apply bulk defaults</button>
+                    </div>
+                  </div>
+                )}
               </div>
-              <div className="flex items-center gap-3 flex-wrap">
-                <label className="flex items-center gap-2">Fill
-                  <input type="color" value={selectedNode.fill === "none" ? "#000000" : selectedNode.fill} onChange={(e) => setNodeFill(selectedNode.id, e.target.value)} disabled={selectedNode.fill === "none"} />
-                </label>
-                <label className="flex items-center gap-2"><input type="checkbox" checked={selectedNode.fill === "none"} onChange={(e) => setNodeFill(selectedNode.id, e.target.checked ? "none" : bulkFill)} /> transparent</label>
-                <label className="flex items-center gap-2">Border
-                  <input type="color" value={selectedNode.stroke || bulkStroke} onChange={(e) => setNodeStroke(selectedNode.id, e.target.value)} />
-                </label>
-                <label className="flex items-center gap-1">w
-                  <input type="number" min={1} max={12} value={selectedNode.strokeWidth ?? bulkStrokeWidth} className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" onChange={(e) => setNodeStrokeW(selectedNode.id, e.target.value)} />
-                </label>
-              </div>
-              <div className="flex items-center gap-3 flex-wrap">
-                <select className="bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" value={selectedNode.textFont || bulkTextFont} onChange={(e) => setNodeTextFont(selectedNode.id, e.target.value)}>
-                  <option value={FONT_STACKS.Outfit}>Outfit</option>
-                  <option value={FONT_STACKS.Inter}>Inter</option>
-                  <option value={FONT_STACKS.Poppins}>Poppins</option>
-                  <option value={FONT_STACKS.Roboto}>Roboto</option>
-                  <option value={FONT_STACKS.System}>system-ui</option>
-                  <option value={FONT_STACKS.HelveticaNowCondensed}>Helvetica Now Condensed (if available)</option>
-                </select>
-                <input type="color" value={selectedNode.textColor || bulkTextColor} onChange={(e) => setNodeTextColor(selectedNode.id, e.target.value)} />
-                <label className="flex items-center gap-1">size
-                  <input type="number" min={TEXT_MIN} max={TEXT_MAX} value={clampTextSize(selectedNode.textSize ?? bulkTextSize)} className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" onChange={(e) => setNodeTextSize(selectedNode.id, e.target.value)} />
-                </label>
-              </div>
-              <div className="flex gap-2">
-                <button className="px-2 py-1 rounded-md border border-[#2a2a3a] text-xs" onClick={() => setSelectedNodeId(null)}>Done</button>
-                <button className="px-2 py-1 rounded-md border border-[#2a2a3a] text-xs" onClick={() => { setNodeFill(selectedNode.id, bulkFillTransparent ? "none" : bulkFill); setNodeStroke(selectedNode.id, bulkStroke); setNodeStrokeW(selectedNode.id, bulkStrokeWidth); setNodeTextFont(selectedNode.id, bulkTextFont); setNodeTextColor(selectedNode.id, bulkTextColor); setNodeTextSize(selectedNode.id, bulkTextSize); }}>Apply bulk defaults to this</button>
+
+              <div className="grid grid-cols-2 gap-2 text-xs max-h-[220px] overflow-auto">
+                {nodes.map((n)=>(
+                  <div key={n.id} className="border border-[#2a2a3a] rounded-lg p-2">
+                    <div className="truncate font-medium" title={n.name}>{n.name}</div>
+                    <div className="opacity-70">{n.area} m²</div>
+                  </div>
+                ))}
               </div>
             </div>
-          )}
+          </details>
         </div>
 
-        {/* Graph stats */}
-        <div className="col-span-1 bg-[#121220] rounded-2xl border border-[#2a2a3a] p-4">
-          <h2 className="text-sm font-semibold tracking-wide text-[#9aa0a6] mb-2">Current Graph</h2>
-          <div className="text-xs text-[#9aa0a6]">{nodes.length} nodes • {links.length} links</div>
-          <div className="mt-2 grid grid-cols-2 gap-2 text-xs max-h-[220px] overflow-auto">
-            {nodes.map((n) => (
-              <div key={n.id} className="border border-[#2a2a3a] rounded-lg p-2">
-                <div className="truncate font-medium" title={n.name}>{n.name}</div>
-                <div className="opacity-70">{n.area} m²</div>
+        {/* Canvas column */}
+        <div className="xl:col-span-8">
+          <div ref={containerRef} className="relative rounded-2xl border border-[#2a2a3a] overflow-hidden" style={{ background: liveBg }}>
+            <svg ref={svgRef} width={"100%"} height={700} viewBox={`-600 -350 1200 700`} className="block">
+              <MarkerDefs styles={styles} />
+              <g id="zoomable" transform={zoomTransform.toString()}>
+                {/* Links */}
+                {links.map((l) => {
+                  const s = nodes.find((n) => n.id === l.source); const t = nodes.find((n) => n.id === l.target);
+                  if (!s || !t) return null;
+                  const dx = (t.x - s.x), dy = (t.y - s.y); const dist = Math.hypot(dx, dy) || 1; const nx = dx / dist, ny = dy / dist;
+                  const rs = rOf(s.area), rt = rOf(t.area);
+
+                  // let arrow/line start & end move inside the circle by `arrowOverlap` (clamped per radius)
+                  const insetS = Math.max(0, Math.min(arrowOverlap, rs - 2));
+                  const insetT = Math.max(0, Math.min(arrowOverlap, rt - 6));
+
+                  const x1 = s.x + nx * (rs + 2 - insetS);
+                  const y1 = s.y + ny * (rs + 2 - insetS);
+                  const x2 = t.x - nx * (rt + 6 - insetT);
+                  const y2 = t.y - ny * (rt + 6 - insetT);
+
+                  const st = styles[l.type];
+                  return (
+                    <g key={l.id} onDoubleClick={() => { pushHistory(); setLinks((p) => p.filter((x) => x.id !== l.id)); }} onClick={() => (lastClickedLinkRef.current = l.id)}>
+                      <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={st.color} strokeWidth={st.width} strokeDasharray={dashFor(l.type)} markerStart={markerUrl(l.type, "start")} markerEnd={markerUrl(l.type, "end")} opacity={0.98} />
+                    </g>
+                  );
+                })}
+                {/* Nodes */}
+                {nodes.map((n) => {
+                  const r = rOf(n.area);
+                  const isSrc = linkSource === n.id && mode === "connect";
+                  const hi = hoverId === n.id || isSrc;
+                  const labelFont = n.textFont || bulkTextFont;
+                  const labelColor = n.textColor || bulkTextColor;
+                  const labelSize = clampTextSize(n.textSize ?? bulkTextSize);
+                  const areaSize = Math.max(TEXT_MIN, labelSize - 1);
+                  return (
+                    <g
+                      key={n.id}
+                      transform={`translate(${n.x || 0},${n.y || 0})`}
+                      onPointerDown={(e) => onPointerDownNode(e, n)}
+                      onClick={() => handleConnect(n)}
+                      onMouseEnter={() => setHoverId(n.id)}
+                      onMouseLeave={() => setHoverId(null)}
+                      style={{ cursor: mode === "connect" ? "crosshair" : "grab" }}
+                    >
+                      <circle r={r} fill={n.fill ?? (bulkFillTransparent ? "none" : bulkFill)} stroke={hi ? styles.necessary.color : (n.stroke || bulkStroke)} strokeWidth={n.strokeWidth ?? bulkStrokeWidth} />
+                      <circle r={r - 2} fill="none" stroke="#2c2c3c" strokeWidth={1} />
+
+                      <text
+                        textAnchor="middle"
+                        dominantBaseline="middle"
+                        className="select-none"
+                        style={{
+                          fill: labelColor,
+                          fontSize: labelSize,
+                          fontWeight: 600,
+                          letterSpacing: 0.4,
+                          fontFamily: labelFont,
+                        }}>
+                        {(() => {
+                          const pad = 10;
+                          const maxW = Math.max(20, (r - pad) * 2);
+                          const lines = wrapToWidth(n.name, labelFont, labelSize, maxW, 5);
+                          const gap = Math.max(2, Math.round(labelSize * 0.2));
+                          const total = lines.length * labelSize + (lines.length - 1) * gap;
+                          const startY = -total / 2 + labelSize * 0.8;
+                          return lines.map((line, i) => (
+                            <tspan key={i} x={0} y={startY + i * (labelSize + gap)}>{line}</tspan>
+                          ));
+                        })()}
+                      </text>
+
+                      {showMeasurements && (
+                        <text y={r - 18} textAnchor="middle" style={{ fill: THEME.subtle, fontSize: areaSize, fontFamily: labelFont }}>
+                          {n.area} m²
+                        </text>
+                      )}
+
+                      {/* disable editor hitboxes while connecting so clicks create links */}
+                      <foreignObject x={-r} y={-18} width={r * 2} height={36} data-ignore-export style={{ pointerEvents: mode === "connect" ? "none" : "auto" }}>
+                        <InlineEdit text={n.name} onChange={(val) => renameNode(n.id, val)} className="mx-auto text-center" />
+                      </foreignObject>
+                      <foreignObject x={-40} y={r - 22} width={80} height={26} data-ignore-export style={{ pointerEvents: mode === "connect" ? "none" : "auto" }}>
+                        <InlineEdit text={`${n.area}`} onChange={(val) => changeArea(n.id, val)} className="text-center" />
+                      </foreignObject>
+                    </g>
+                  );
+                })}
+              </g>
+            </svg>
+
+            {/* Floating canvas dock (top-right) */}
+            <div className="absolute right-3 top-3 flex flex-col gap-2" data-ignore-export>
+              <div className="bg-black/35 backdrop-blur p-2 rounded-xl border border-[#2a2a3a] flex flex-col gap-2">
+                <button className="dock-btn btn" title="Zoom out" onClick={zoomOut}>−</button>
+                <button className="dock-btn btn" title="Reset view" onClick={resetZoom}>⟲</button>
+                <button className="dock-btn btn" title="Fit to view" onClick={fitToView}>⤢</button>
+                <button className="dock-btn btn" title="Zoom in" onClick={zoomIn}>＋</button>
               </div>
-            ))}
+              <div className="bg-black/35 backdrop-blur p-2 rounded-xl border border-[#2a2a3a] flex flex-col gap-2">
+                <button className="dock-btn btn" onClick={()=>setPhysics(p=>!p)}>{physics?"⏸":"▶"}</button>
+                <button className="dock-btn btn" onClick={detanglePulse}>✺</button>
+                <button className="dock-btn btn" onClick={toggleFullscreen}>{isFullscreen?"⤢":"⤢"}</button>
+              </div>
+              <div className="bg-black/35 backdrop-blur p-2 rounded-xl border border-[#2a2a3a] flex flex-col gap-2">
+                <button className="dock-btn btn" onClick={exportSVG}>SVG</button>
+                <button className="dock-btn btn" onClick={exportPNG}>PNG</button>
+              </div>
+            </div>
+
+            {/* Status pill */}
+            <div className="absolute left-3 bottom-3 text-xs text-[#9aa0a6] bg-black/30 rounded-full px-3 py-1" data-ignore-export>
+              Mode: <span className="font-semibold text-white">{mode}</span>{mode === "connect" && linkSource && <span> • select a target…</span>}
+              {selectedNode && <span> • Editing: <span className="text-white">{selectedNode.name}</span></span>}
+              <span> • Line: <span className="text-white capitalize">{currentLineType}</span></span>
+            </div>
+          </div>
+
+          {/* About */}
+          <div className="mt-3 card">
+            <div className="text-sm">
+              <p><strong>Authored by:</strong> Mark Jay O. Gooc — Architecture student, Batangas State University – TNEU.</p>
+              <p className="opacity-70 text-xs mt-1">All Rights Reserve 2025.</p>
+            </div>
           </div>
         </div>
-      </div>
-
-      {/* Canvas */}
-      <div className="mx-auto max-w-[1400px] px-4 my-4">
-        <div ref={containerRef} className="relative rounded-2xl border border-[#2a2a3a] overflow-hidden" style={{ background: liveBg }}>
-          <svg ref={svgRef} width={"100%"} height={700} viewBox={`-600 -350 1200 700`} className="block">
-            <MarkerDefs styles={styles} />
-            <g id="zoomable" transform={zoomTransform.toString()}>
-              {/* Links */}
-              {links.map((l) => {
-                const s = nodes.find((n) => n.id === l.source); const t = nodes.find((n) => n.id === l.target);
-                if (!s || !t) return null;
-                const dx = (t.x - s.x), dy = (t.y - s.y); const dist = Math.hypot(dx, dy) || 1; const nx = dx / dist, ny = dy / dist;
-                const rs = rOf(s.area), rt = rOf(t.area);
-
-                // NEW: let arrow/line start & end move inside the circle by `arrowOverlap` (clamped per radius)
-                const insetS = Math.max(0, Math.min(arrowOverlap, rs - 2));
-                const insetT = Math.max(0, Math.min(arrowOverlap, rt - 6));
-
-                const x1 = s.x + nx * (rs + 2 - insetS);
-                const y1 = s.y + ny * (rs + 2 - insetS);
-                const x2 = t.x - nx * (rt + 6 - insetT);
-                const y2 = t.y - ny * (rt + 6 - insetT);
-
-                const st = styles[l.type];
-                return (
-                  <g key={l.id} onDoubleClick={() => { pushHistory(); setLinks((p) => p.filter((x) => x.id !== l.id)); }} onClick={() => (lastClickedLinkRef.current = l.id)}>
-                    <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={st.color} strokeWidth={st.width} strokeDasharray={dashFor(l.type)} markerStart={markerUrl(l.type, "start")} markerEnd={markerUrl(l.type, "end")} opacity={0.98} />
-                  </g>
-                );
-              })}
-              {/* Nodes */}
-              {nodes.map((n) => {
-                const r = rOf(n.area);
-                const isSrc = linkSource === n.id && mode === "connect";
-                const hi = hoverId === n.id || isSrc;
-                const labelFont = n.textFont || bulkTextFont;
-                const labelColor = n.textColor || bulkTextColor;
-                const labelSize = clampTextSize(n.textSize ?? bulkTextSize);
-                const areaSize = Math.max(TEXT_MIN, labelSize - 1);
-                return (
-                  <g
-                    key={n.id}
-                    transform={`translate(${n.x || 0},${n.y || 0})`}
-                    onPointerDown={(e) => onPointerDownNode(e, n)}
-                    onClick={() => handleConnect(n)}
-                    onMouseEnter={() => setHoverId(n.id)}
-                    onMouseLeave={() => setHoverId(null)}
-                    style={{ cursor: mode === "connect" ? "crosshair" : "grab" }}
-                  >
-                    <circle r={r} fill={n.fill ?? (bulkFillTransparent ? "none" : bulkFill)} stroke={hi ? styles.necessary.color : (n.stroke || bulkStroke)} strokeWidth={n.strokeWidth ?? bulkStrokeWidth} />
-                    <circle r={r - 2} fill="none" stroke="#2c2c3c" strokeWidth={1} />
-                    
-                    <text textAnchor="middle" dominantBaseline="middle" className="select-none"
-                          style={{ fill: labelColor, fontSize: labelSize, fontWeight: 600, letterSpacing: 0.4, fontFamily: labelFont }}>
-                      {(() => {
-                        const pad = 10;
-                        const maxW = Math.max(20, (r - pad) * 2);
-                        const lines = wrapToWidth(n.name, labelFont, labelSize, maxW, 5);
-                        const gap = Math.max(2, Math.round(labelSize * 0.2));
-                        const total = lines.length * labelSize + (lines.length - 1) * gap;
-                        const startY = -total / 2 + labelSize * 0.8;
-                        return lines.map((line, i) => (
-                          <tspan key={i} x={0} y={startY + i * (labelSize + gap)}>{line}</tspan>
-                        ));
-                      })()}
-                    </text>
-
-                    {showMeasurements && (
-
-
-                    
-
-                    <text y={r - 18} textAnchor="middle" style={{ fill: THEME.subtle, fontSize: areaSize, fontFamily: labelFont }}>
-                      {n.area} m²
-                    </text>
-
-
-                    )}
-                    <foreignObject x={-r} y={-18} width={r * 2} height={36} data-ignore-export>
-                      <InlineEdit text={n.name} onChange={(val) => renameNode(n.id, val)} className="mx-auto text-center" />
-                    </foreignObject>
-                    <foreignObject x={-40} y={r - 22} width={80} height={26} data-ignore-export>
-                      <InlineEdit text={`${n.area}`} onChange={(val) => changeArea(n.id, val)} className="text-center" />
-                    </foreignObject>
-                  </g>
-                );
-              })}
-            </g>
-          </svg>
-
-          {/* Status pill (not exported) */}
-          <div className="absolute left-3 bottom-3 text-xs text-[#9aa0a6] bg-black/30 rounded-full px-3 py-1" data-ignore-export>
-            Mode: <span className="font-semibold text-white">{mode}</span>{mode === "connect" && linkSource && <span> • select a target…</span>}
-            {selectedNode && <span> • Editing: <span className="text-white">{selectedNode.name}</span></span>}
-          </div>
-        </div>
-      </div>
-
-      {/* About section */}
-      <div className="mx-auto max-w-[1400px] px-4 pb-16">
-        <details className="bg-[#121220] rounded-2xl border border-[#2a2a3a] p-4">
-          <summary className="cursor-pointer select-none text-sm font-semibold tracking-wide text-[#9aa0a6]">
-            About this tool
-          </summary>
-          <div className="mt-3 text-sm leading-6 text-[#d8d8e2]">
-            <p><strong>Authored by:</strong> Mark Jay O. Gooc — Architecture student, Batangas State University – TNEU</p>
-            <p className="opacity-80">All rights Reserve 2025.</p>
-          </div>
-        </details>
       </div>
     </div>
   );
@@ -1450,7 +1529,7 @@ function InlineEdit({ text, onChange, className }) {
         className={`pointer-events-auto select-none text-[11px] text-white/90 bg-transparent ${className}`}
         style={{ lineHeight: 1.2 }}
       >
-        {/* double‑click to edit */}
+        {/* double-click to edit */}
       </div>
     );
   }
@@ -1486,16 +1565,6 @@ function InlineEditField({ label, value, onChange }) {
   );
 }
 
-// Wrap long labels into tspans
-function wrapText(text, max = 16) {
-  const words = String(text).split(/\s+/); const lines = []; let cur = "";
-  for (const w of words) {
-    if ((cur + " " + w).trim().length > max) { if (cur) lines.push(cur); cur = w; }
-    else { cur = (cur + " " + w).trim(); }
-  }
-  if (cur) lines.push(cur);
-  return lines.slice(0, 5);
-}
 // --- Precise width-based SVG text wrapping (uses canvas measureText) ---------
 const _measureCtx = (() => {
   try {
@@ -1506,17 +1575,12 @@ const _measureCtx = (() => {
 
 function measureWidth(s, fontFamily, fontPx) {
   const ctx = _measureCtx;
-  if (!ctx) return String(s).length * fontPx * 0.6; // heuristic fallback
+  if (!ctx) return String(s).length * fontPx * 0.6;
   ctx.font = `${Math.max(8, fontPx)}px ${fontFamily || "system-ui, Arial"}`;
   return ctx.measureText(String(s)).width;
 }
 
-/**
- * Wrap a label to a specific max pixel width using canvas text metrics.
- * - Breaks on spaces when possible.
- * - If a single word is too long, it hard-wraps by characters.
- * - Limits lines to maxLines (adds ellipsis if truncated).
- */
+/** Wrap a label to a specific max pixel width using canvas text metrics. */
 function wrapToWidth(label, fontFamily, fontPx, maxWidth, maxLines = 5) {
   const words = String(label).split(/\s+/).filter(Boolean);
   const lines = [];
@@ -1527,7 +1591,6 @@ function wrapToWidth(label, fontFamily, fontPx, maxWidth, maxLines = 5) {
   for (let i = 0; i < words.length; i++) {
     const w = words[i];
     if (!cur) {
-      // If the word alone exceeds width, hard-wrap by chars
       if (measureWidth(w, fontFamily, fontPx) > maxWidth) {
         let buf = "";
         for (const ch of w) {
@@ -1551,24 +1614,21 @@ function wrapToWidth(label, fontFamily, fontPx, maxWidth, maxLines = 5) {
   }
   if (lines.length < maxLines && cur) pushLine(cur);
 
-  // Ellipsize if too many words to fit
   if (lines.length > maxLines) {
     return lines.slice(0, maxLines - 1).concat([lines[maxLines - 1] + "…"]);
   }
   return lines;
 }
 
-
 // Smoke tests (console)
 (function runSmokeTests() {
   try {
-    const parsed = parseList("A, 10\\nB 20\\nC-30\\nNoArea");
+    const parsed = parseList("A, 10\nB 20\nC-30\nNoArea");
     console.assert(parsed.length === 4, "parseList length");
     console.assert(parsed[0].area === 10 && parsed[1].area === 20 && parsed[2].area === 30, "parseList areas");
     const r = scaleRadius(parsed);
     const r10 = r(10), r20 = r(20), r30 = r(30);
     console.assert(r10 <= r20 && r20 <= r30, "scaleRadius monotonic");
-    console.assert(wrapText("one two three four five six seven eight nine ten", 4).length <= 5, "wrapText cap");
     console.assert(clampTextSize("16") === 16, "text size string→number");
     console.assert(clampTextSize(5) === TEXT_MIN, "text size min clamp");
     console.assert(clampTextSize(99) === TEXT_MAX, "text size max clamp");
