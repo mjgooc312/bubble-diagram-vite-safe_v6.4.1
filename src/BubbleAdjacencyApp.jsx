@@ -1119,7 +1119,7 @@ function zeroVelocities() {
         </div>
       )}
 {/* Right Panel */}
-            <div className={panelOpen ? "fixed right-0 top-0 z-20 h-screen w-[420px] overflow-y-auto border-l border-[#2a2a3a] bg-[#0b0b12]" : "fixed right-0 top-0 z-20 h-screen w-[56px] overflow-y-auto border-l border-[#2a2a3a] bg-[#0b0b12]"} data-aside=\"true\">
+            <div className={panelOpen ? "fixed right-0 top-0 z-20 h-screen w-[420px] overflow-y-auto border-l border-[#2a2a3a] bg-[#0b0b12]" : "fixed right-0 top-0 z-20 h-screen w-[56px] overflow-y-auto border-l border-[#2a2a3a] bg-[#0b0b12]"} data-aside="true">
         <div className="px-3 py-3 grid grid-cols-1 gap-3">
           {/* Panel toggle */}
           <button
