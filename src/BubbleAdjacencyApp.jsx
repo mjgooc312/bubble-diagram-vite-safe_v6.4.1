@@ -229,6 +229,9 @@ export default function BubbleAdjacencyApp() {
   // NEW: rotation sensitivity (adds a light "spin" force)
   const [rotationSensitivity, setRotationSensitivity] = useState(0); // 0..100
 
+  // Right panel (D5-style) toggle
+  const [panelOpen, setPanelOpen] = useState(true);
+
   // Changelog banner show-once per version
   const [showChangelog, setShowChangelog] = useState(false);
   useEffect(() => {
@@ -1115,8 +1118,16 @@ function zeroVelocities() {
           </div>
         </div>
       )}
-<div className="sticky top-0 z-10 backdrop-blur bg-black/30 border-b border-[#2a2a3a]">
-        <div className="mx-auto max-w-[1400px] px-4 py-3 grid items-start gap-3 grid-cols-[repeat(auto-fit,minmax(520px,1fr))]">
+{/* Right Panel */}
+      <aside className={panelOpen ? "fixed right-0 top-0 z-20 h-screen w-[420px] overflow-y-auto border-l border-[#2a2a3a] bg-[#0b0b12]" : "fixed right-0 top-0 z-20 h-screen w-[56px] overflow-y-auto border-l border-[#2a2a3a] bg-[#0b0b12]"}>
+        <div className="px-3 py-3 grid grid-cols-1 gap-3 items-start gap-3 grid-cols-[repeat(auto-fit,minmax(520px,1fr))]">
+          {/* Panel toggle */}
+          <button
+            className="absolute left-[-28px] top-4 h-8 w-8 rounded-full border border-[#2a2a3a] bg-[#0b0b12] hover:bg-white/5 text-xs"
+            title={panelOpen ? "Collapse" : "Expand"}
+            onClick={()=>setPanelOpen(p=>!p)}
+          >{panelOpen ? "»" : "«"}</button>
+
           <div className="font-semibold tracking-wide text-sm text-[#9aa0a6]">Bubble Diagram Builder</div>
 
           <div className="ml-auto flex flex-wrap items-center gap-2">
@@ -1375,10 +1386,10 @@ VOD Review / Theater, 60`} value={rawList} onChange={(e) => setRawList(e.target.
             ))}
           </div>
         </div>
-      </div>
+      </aside>
 
       {/* Canvas */}
-      <div className="mx-auto max-w-[1400px] px-4 my-4">
+      <div className="mx-auto max-w-[1400px] px-4 my-4 md:pr-[440px]">
         <div ref={containerRef} className="relative rounded-2xl border border-[#2a2a3a] overflow-hidden" style={{ background: liveBg }}>
           <svg ref={svgRef} width={"100%"} height={700} viewBox={`-600 -350 1200 700`} className="block">
             <MarkerDefs styles={styles} />
