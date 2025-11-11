@@ -3,16 +3,10 @@ import * as d3 from "d3";
 
 /**
  * Bubble Diagram Builder – Force-directed (React + D3)
- * v4.6 — UI refresh (design-only), preserves all previous functionality
+ * v4.6.1 — Arrow layer above bubbles + Instructions card
  *
- * What changed (UI only):
- * • Slim command bar + floating canvas dock (zoom/fit/fullscreen/physics/detangle/exports).
- * • Controls grouped into neat collapsible cards (Spaces · Styles · Layout & Physics · Scenes · Files · Stats).
- * • High-contrast selects, rounded color pills, subtle borders, tidy spacing, custom scrollbars.
- * • No text glow; readability kept via good contrast.
- *
- * What did NOT change:
- * • All features/behaviors, data model, sim/forces, arrow overlap, scenes, export/import, etc.
+ * • Arrows/links now render ABOVE the bubble layer (SVG order changed).
+ * • Added “Instructions” card (collapsible) at the top of the left panel.
  */
 
 // ---- Theme (UI chrome only; not the canvas background) ----------------------
@@ -152,8 +146,7 @@ function MarkerDefs({ styles }) {
           {shape === "diamond" && (
             <polygon
               points="3.5 0, 7 3.5, 3.5 7, 0 3.5"
-              transform={kind === "end" ? "translate(3,0)" : "translate(1,0)"
-              }
+              transform={kind === "end" ? "translate(3,0)" : "translate(1,0)"}
               fill={st.color}
             />
           )}
@@ -1128,6 +1121,27 @@ export default function BubbleAdjacencyApp() {
       <div className="mx-auto max-w-[1500px] px-4 py-4 grid grid-cols-1 xl:grid-cols-12 gap-4">
         {/* Controls column */}
         <div className="xl:col-span-4 space-y-4">
+          {/* Instructions (NEW) */}
+          <details open className="card">
+            <summary className="cursor-pointer select-none group-title">Instructions</summary>
+            <div className="mt-3 text-sm leading-6 text-[#d9d9e6]">
+              <ol className="list-decimal pl-5 space-y-2">
+                <li><b>Paste your spaces</b> in “Spaces” as <code>Name, area</code> (one per line) then click <b>Generate bubbles</b>.</li>
+                <li><b>Select/Drag</b> mode lets you move bubbles and edit labels (double-click a label).</li>
+                <li>Switch to <b>Connect</b> to draw lines: click a source bubble, then a target. Use the line style “necessary/ideal” and arrowheads below.</li>
+                <li>Use <b>Styles</b> → “Bubbles (bulk)” / “Labels (bulk)” to set defaults and <b>Apply to all</b>.</li>
+                <li>In <b>Layout & Physics</b>: adjust <b>Buffer</b>, allow <b>Arrow overlap</b> into circles, tweak <b>Rotation sensitivity</b>. Use <b>De-tangle</b> to separate clusters.</li>
+                <li>Use the <b>floating dock</b> on the canvas to zoom, reset, fit, pause physics, detangle, fullscreen, and export.</li>
+                <li><b>Files & Export</b>: Save/Open JSON, Export SVG/PNG. “Export background” controls the exported image background.</li>
+                <li><b>Scenes</b>: capture positions + zoom, then revisit or update later.</li>
+              </ol>
+              <div className="mt-3 text-xs text-[#9aa0a6]">
+                Shortcuts: <b>Ctrl/⌘+Z</b> undo • <b>Ctrl/⌘+Y</b> redo • <b>Delete</b> removes last-clicked link • Double-click background resets zoom.  
+                Note: Arrows render <b>above</b> bubbles so arrowheads remain visible when overlapping.
+              </div>
+            </div>
+          </details>
+
           {/* Spaces */}
           <details open className="card">
             <summary className="cursor-pointer select-none group-title">Spaces (name, area m²)</summary>
@@ -1389,30 +1403,7 @@ export default function BubbleAdjacencyApp() {
             <svg ref={svgRef} width={"100%"} height={700} viewBox={`-600 -350 1200 700`} className="block">
               <MarkerDefs styles={styles} />
               <g id="zoomable" transform={zoomTransform.toString()}>
-                {/* Links */}
-                {links.map((l) => {
-                  const s = nodes.find((n) => n.id === l.source); const t = nodes.find((n) => n.id === l.target);
-                  if (!s || !t) return null;
-                  const dx = (t.x - s.x), dy = (t.y - s.y); const dist = Math.hypot(dx, dy) || 1; const nx = dx / dist, ny = dy / dist;
-                  const rs = rOf(s.area), rt = rOf(t.area);
-
-                  // let arrow/line start & end move inside the circle by `arrowOverlap` (clamped per radius)
-                  const insetS = Math.max(0, Math.min(arrowOverlap, rs - 2));
-                  const insetT = Math.max(0, Math.min(arrowOverlap, rt - 6));
-
-                  const x1 = s.x + nx * (rs + 2 - insetS);
-                  const y1 = s.y + ny * (rs + 2 - insetS);
-                  const x2 = t.x - nx * (rt + 6 - insetT);
-                  const y2 = t.y - ny * (rt + 6 - insetT);
-
-                  const st = styles[l.type];
-                  return (
-                    <g key={l.id} onDoubleClick={() => { pushHistory(); setLinks((p) => p.filter((x) => x.id !== l.id)); }} onClick={() => (lastClickedLinkRef.current = l.id)}>
-                      <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={st.color} strokeWidth={st.width} strokeDasharray={dashFor(l.type)} markerStart={markerUrl(l.type, "start")} markerEnd={markerUrl(l.type, "end")} opacity={0.98} />
-                    </g>
-                  );
-                })}
-                {/* Nodes */}
+                {/* NODES FIRST (bubbles under) */}
                 {nodes.map((n) => {
                   const r = rOf(n.area);
                   const isSrc = linkSource === n.id && mode === "connect";
@@ -1471,6 +1462,38 @@ export default function BubbleAdjacencyApp() {
                       <foreignObject x={-40} y={r - 22} width={80} height={26} data-ignore-export style={{ pointerEvents: mode === "connect" ? "none" : "auto" }}>
                         <InlineEdit text={`${n.area}`} onChange={(val) => changeArea(n.id, val)} className="text-center" />
                       </foreignObject>
+                    </g>
+                  );
+                })}
+
+                {/* LINKS AFTER (on top of bubbles) */}
+                {links.map((l) => {
+                  const s = nodes.find((n) => n.id === l.source); const t = nodes.find((n) => n.id === l.target);
+                  if (!s || !t) return null;
+                  const dx = (t.x - s.x), dy = (t.y - s.y); const dist = Math.hypot(dx, dy) || 1; const nx = dx / dist, ny = dy / dist;
+                  const rs = rOf(s.area), rt = rOf(t.area);
+
+                  // let arrow/line start & end move inside the circle by `arrowOverlap` (clamped per radius)
+                  const insetS = Math.max(0, Math.min(arrowOverlap, rs - 2));
+                  const insetT = Math.max(0, Math.min(arrowOverlap, rt - 6));
+
+                  const x1 = s.x + nx * (rs + 2 - insetS);
+                  const y1 = s.y + ny * (rs + 2 - insetS);
+                  const x2 = t.x - nx * (rt + 6 - insetT);
+                  const y2 = t.y - ny * (rt + 6 - insetT);
+
+                  const st = styles[l.type];
+                  return (
+                    <g key={l.id} onDoubleClick={() => { pushHistory(); setLinks((p) => p.filter((x) => x.id !== l.id)); }} onClick={() => (lastClickedLinkRef.current = l.id)}>
+                      <line
+                        x1={x1} y1={y1} x2={x2} y2={y2}
+                        stroke={st.color}
+                        strokeWidth={st.width}
+                        strokeDasharray={dashFor(l.type)}
+                        markerStart={markerUrl(l.type, "start")}
+                        markerEnd={markerUrl(l.type, "end")}
+                        opacity={0.98}
+                      />
                     </g>
                   );
                 })}
