@@ -1119,7 +1119,7 @@ function zeroVelocities() {
         </div>
       )}
 {/* Right Panel */}
-            <aside className={panelOpen ? "fixed right-0 top-0 z-20 h-screen w-[420px] overflow-y-auto border-l border-[#2a2a3a] bg-[#0b0b12]" : "fixed right-0 top-0 z-20 h-screen w-[56px] overflow-y-auto border-l border-[#2a2a3a] bg-[#0b0b12]"}>
+            <div className={panelOpen ? "fixed right-0 top-0 z-20 h-screen w-[420px] overflow-y-auto border-l border-[#2a2a3a] bg-[#0b0b12]" : "fixed right-0 top-0 z-20 h-screen w-[56px] overflow-y-auto border-l border-[#2a2a3a] bg-[#0b0b12]"} data-aside=\"true\">
         <div className="px-3 py-3 grid grid-cols-1 gap-3">
           {/* Panel toggle */}
           <button
@@ -1393,7 +1393,7 @@ VOD Review / Theater, 60`} value={rawList} onChange={(e) => setRawList(e.target.
             ))}
           </div>
         </div>
-      </aside>
+      </div>
 {/* Canvas */}
       <div className="mx-auto max-w-[1400px] px-4 my-4 md:pr-[440px]">
         <div ref={containerRef} className="relative rounded-2xl border border-[#2a2a3a] overflow-hidden" style={{ background: liveBg }}>
