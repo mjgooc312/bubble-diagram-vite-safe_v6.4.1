@@ -82,18 +82,35 @@ function clampTextSize(v) {
 }
 
 /** Parse "Name, 120" / "Name - 120" / "Name 120" */
+
 function parseList(text) {
-  return text
-    .split(/\r? /)
+  const lines = String(text || "")
+    .split(/\r?\n/)                 // split by lines only
     .map((l) => l.trim())
     .filter(Boolean)
-    .map((line) => {
-      const m = line.match(/^(.*?)[,|-]?\s*(\d+(?:\.\d+)?)\s*$/);
-      return m
-        ? { id: uid(), name: m[1].trim(), area: parseFloat(m[2]) }
-        : { id: uid(), name: line, area: 20 };
-    });
+    .filter((l) => !/^\/\//.test(l) && !/^#/.test(l)); // drop comment lines
+
+  const out = [];
+  for (const line of lines) {
+    // Try patterns like "Name, 90", "Name - 90", "Name 90", allow units
+    let m =
+      line.match(/^(.*?)[,|\-–—]\s*(\d+(?:\.\d+)?)\s*(?:m2|m²|sqm|sq\.?m)?\s*$/i) ||
+      line.match(/^(.*\S)\s+(\d+(?:\.\d+)?)\s*(?:m2|m²|sqm|sq\.?m)?\s*$/i);
+
+    let name, area;
+    if (m) {
+      name = (m[1] || "").trim().replace(/[;,]\s*$/, "");
+      area = Math.max(1, parseFloat(m[2]));
+    } else {
+      name = line.replace(/[;,]\s*$/, "");
+      area = 20; // default if area omitted
+    }
+    if (!name) continue;
+    out.push({ id: uid(), name, area });
+  }
+  return out;
 }
+
 
 /** sqrt(area) → [BASE_R_MIN, BASE_R_MAX] */
 function scaleRadius(nodes) {
@@ -1121,7 +1138,7 @@ function zeroVelocities() {
       )}
 {/* Right Panel */}
             <div className={panelOpen ? "fixed right-0 top-0 z-20 h-screen w-[420px] overflow-y-auto overflow-x-hidden border-l border-[#2a2a3a] bg-[#0b0b12]" : "fixed right-0 top-0 z-20 h-screen w-[56px] overflow-y-auto border-l border-[#2a2a3a] bg-[#0b0b12]"} data-aside="true">
-        <div className="px-4 py-5 grid grid-cols-1 gap-4 min-w-0">
+        <div className="px-4 py-5 pb-24 grid grid-cols-1 gap-4 min-w-0">
           {/* Panel toggle */}
           <button
             className="absolute left-[-28px] top-4 h-8 w-8 rounded-full border border-[#2a2a3a] bg-[#0b0b12] hover:bg-white/5 text-xs"
@@ -1315,7 +1332,7 @@ function zeroVelocities() {
       
 {/* Left Panel */}
             <div className={leftPanelOpen ? "fixed left-0 top-0 z-20 h-screen w-[420px] overflow-y-auto overflow-x-hidden border-r border-[#2a2a3a] bg-[#0b0b12]" : "fixed left-0 top-0 z-20 h-screen w-[56px] overflow-y-auto overflow-x-hidden border-r border-[#2a2a3a] bg-[#0b0b12]"}>
-              <div className="px-4 py-5 grid grid-cols-1 gap-4 min-w-0">
+              <div className="px-4 py-5 pb-24 grid grid-cols-1 gap-4 min-w-0">
                 {/* Panel toggle */}
                 <button
                   className="absolute right-[-28px] top-4 h-8 w-8 rounded-full border border-[#2a2a3a] bg-[#0b0b12] hover:bg-white/5 text-xs"
