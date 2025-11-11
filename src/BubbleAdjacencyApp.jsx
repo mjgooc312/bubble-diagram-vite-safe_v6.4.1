@@ -60,6 +60,11 @@ function toNumber(v, fallback) {
   const n = typeof v === "string" && v.trim() === "" ? NaN : Number(v);
   return Number.isFinite(n) ? n : fallback;
 }
+// normalize a label for name-based matching
+function norm(s){
+  return String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
 
 /** Clamp text size into safe range and coerce to number */
 function clampTextSize(v) {
@@ -215,7 +220,19 @@ export default function BubbleAdjacencyApp() {
   // NEW: rotation sensitivity (adds a light "spin" force)
   const [rotationSensitivity, setRotationSensitivity] = useState(0); // 0..100
   const [showMeasurements, setShowMeasurements] = useState(true);
-  const [updateAreasFromList, setUpdateAreasFromList] = useState(false); // update areas too when applying list
+
+// --- Scenes (positions + zoom) ---
+const SCENES_KEY = "bubbleScenes:v1";
+const [scenes, setScenes] = useState(() => {
+  try { return JSON.parse(localStorage.getItem(SCENES_KEY) || "[]"); }
+  catch { return []; }
+});
+const [activeSceneId, setActiveSceneId] = useState(null);
+useEffect(() => {
+  try { localStorage.setItem(SCENES_KEY, JSON.stringify(scenes)); } catch {}
+}, [scenes]);
+  const [updateAreasFromList, setUpdateAreasFromList] = useState(false);
+  const [updateMatchMode, setUpdateMatchMode] = useState("name"); // "name" | "index" // update areas too when applying list
 
   // Edge style presets (necessary vs ideal)
   const [styles, setStyles] = useState({
@@ -329,6 +346,8 @@ export default function BubbleAdjacencyApp() {
       },
       exportBgMode, exportBgCustom,
       liveBgMode, liveBgCustom,
+      scenes,
+      activeSceneId,
     };
     savePresets(payload);
   }, [
@@ -425,12 +444,14 @@ export default function BubbleAdjacencyApp() {
     // Reset zoom to identity so fresh graph starts centered
     resetZoom();
   }
-  function updateFromList() {
-    if (!nodes.length) return; // nothing to update
-    const parsed = parseList(rawList || "");
-    if (!parsed.length) return;
-    pushHistory();
-    // Update names (and optionally areas) by index; keep positions/styles/links intact
+  
+function updateFromList() {
+  if (!nodes.length) return;
+  const parsed = parseList(rawList || "");
+  if (!parsed.length) return;
+  pushHistory();
+
+  if (updateMatchMode === "index") {
     setNodes((prev) => prev.map((n, i) => {
       if (i >= parsed.length) return n;
       const src = parsed[i];
@@ -440,7 +461,6 @@ export default function BubbleAdjacencyApp() {
         ...(updateAreasFromList ? { area: Math.max(1, +src.area || n.area) } : {}),
       };
     }));
-    // If parsed has more entries than nodes, append new nodes near center (no reset)
     if (parsed.length > nodes.length) {
       const extras = parsed.slice(nodes.length).map((x) => ({
         id: Math.random().toString(36).slice(2, 9),
@@ -457,7 +477,55 @@ export default function BubbleAdjacencyApp() {
       }));
       setNodes((prev) => [...prev, ...extras]);
     }
+    return;
   }
+
+  // default: match by NAME (safer after JSON imports that reorder nodes)
+  setNodes((prev) => {
+    const buckets = new Map();
+    prev.forEach((n, idx) => {
+      const k = norm(n.name);
+      const arr = buckets.get(k) || [];
+      arr.push(idx);
+      buckets.set(k, arr);
+    });
+
+    const updated = [...prev];
+    const used = new Set();
+    const extras = [];
+
+    parsed.forEach((src) => {
+      const key = norm(src.name);
+      const arr = buckets.get(key);
+      let idx = -1;
+      if (arr && arr.length) idx = arr.shift();
+      if (idx >= 0 && !used.has(idx)) {
+        updated[idx] = {
+          ...updated[idx],
+          name: src.name,
+          ...(updateAreasFromList ? { area: Math.max(1, +src.area || updated[idx].area) } : {}),
+        };
+        used.add(idx);
+      } else {
+        extras.push({
+          id: Math.random().toString(36).slice(2, 9),
+          name: src.name,
+          area: Math.max(1, +src.area || 20),
+          x: (Math.random() - 0.5) * 40,
+          y: (Math.random() - 0.5) * 40,
+          fill: bulkFillTransparent ? "none" : bulkFill,
+          stroke: bulkStroke,
+          strokeWidth: bulkStrokeWidth,
+          textFont: bulkTextFont,
+          textColor: bulkTextColor,
+          textSize: clampTextSize(bulkTextSize),
+        });
+      }
+    });
+    return extras.length ? [...updated, ...extras] : updated;
+  });
+}
+
 
 
   function clearAll() {
@@ -565,7 +633,59 @@ export default function BubbleAdjacencyApp() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // ---------------------------- Export helpers -------------------------------
+  
+// ---------------------------- Scenes API ------------------------------------
+function captureScenePayload() {
+  const pos = {};
+  for (const n of nodes) pos[n.id] = { x: n.x || 0, y: n.y || 0 };
+  return {
+    positions: pos,
+    zoom: { k: zoomTransform.k, x: zoomTransform.x, y: zoomTransform.y },
+    updatedAt: Date.now(),
+  };
+}
+function addScene(name) {
+  const nm = String(name || "").trim() || `Scene ${scenes.length + 1}`;
+  const payload = captureScenePayload();
+  const s = { id: Math.random().toString(36).slice(2,9), name: nm, ...payload };
+  setScenes(prev => [...prev, s]);
+  setActiveSceneId(s.id);
+}
+function applyScene(sceneId) {
+  const s = scenes.find(x => x.id === sceneId);
+  if (!s) return;
+  const { positions, zoom } = s;
+  setNodes(prev => prev.map(n => {
+    const p = positions[n.id];
+    return p ? { ...n, x: p.x, y: p.y, fx: undefined, fy: undefined } : n;
+  }));
+  try {
+    const svg = d3.select(svgRef.current);
+    const zoomer = zoomBehaviorRef.current;
+    if (svg && zoomer && zoom) {
+      svg.transition().duration(250)
+         .call(zoomer.transform, d3.zoomIdentity.translate(zoom.x, zoom.y).scale(zoom.k || 1));
+    }
+  } catch {}
+  zeroVelocities();
+  simRef.current?.alpha(0.3).restart();
+}
+function updateScene(sceneId) {
+  const idx = scenes.findIndex(x => x.id === sceneId);
+  if (idx === -1) return;
+  const payload = captureScenePayload();
+  setScenes(prev => {
+    const next = [...prev];
+    next[idx] = { ...next[idx], ...payload };
+    return next;
+  });
+}
+function deleteScene(sceneId) {
+  setScenes(prev => prev.filter(x => x.id !== sceneId));
+  if (activeSceneId === sceneId) setActiveSceneId(null);
+}
+
+// ---------------------------- Export helpers -------------------------------
   function getExportBg() {
     if (exportBgMode === "transparent") return null;
     if (exportBgMode === "white") return "#ffffff";
@@ -827,7 +947,19 @@ export default function BubbleAdjacencyApp() {
     r.readAsText(file);
   }
 
-  // ---------------------------- Zoom / Pan / Fit -----------------------------
+  
+function zeroVelocities() {
+  try {
+    const sim = simRef.current;
+    if (!sim) return;
+    const arr = sim.nodes ? sim.nodes() : [];
+    if (Array.isArray(arr)) {
+      for (const n of arr) { n.vx = 0; n.vy = 0; }
+    }
+  } catch {}
+}
+
+// ---------------------------- Zoom / Pan / Fit -----------------------------
   useEffect(() => {
     const svg = d3.select(svgRef.current);
     const zoom = d3.zoom()
@@ -1068,6 +1200,25 @@ export default function BubbleAdjacencyApp() {
             <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={() => setPhysics((p) => !p)}>{physics ? "Physics: ON" : "Physics: OFF"}</button>
             <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={() => setNodes([...nodes])}>Re-Layout</button>
 
+            
+{/* Scenes */}
+<div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-2 py-2 text-xs">
+  <span className="opacity-70">Scene:</span>
+  <select className="bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
+          value={activeSceneId || ""}
+          onChange={(e) => setActiveSceneId(e.target.value || null)}>
+    <option value="">(none)</option>
+    {scenes.map((s) => (<option key={s.id} value={s.id}>{s.name}</option>))}
+  </select>
+  <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" onClick={() => {
+    const nm = window.prompt("New scene name", `Scene ${scenes.length + 1}`);
+    if (nm != null) addScene(nm);
+  }}>Add</button>
+  <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" disabled={!activeSceneId} onClick={() => activeSceneId && applyScene(activeSceneId)}>Go</button>
+  <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" disabled={!activeSceneId} onClick={() => activeSceneId && updateScene(activeSceneId)}>Update</button>
+  <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" disabled={!activeSceneId} onClick={() => activeSceneId && deleteScene(activeSceneId)}>Delete</button>
+</div>
+
             {/* Zoom controls */}
             <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-2 py-2 text-xs">
               <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" onClick={zoomOut}>−</button>
@@ -1100,6 +1251,7 @@ export default function BubbleAdjacencyApp() {
               <button className="px-3 py-1.5 rounded-xl border border-[#2a2a3a] text-xs" onClick={() => setRawList(SAMPLE_TEXT)}>Load Sample</button>
               <button className="px-3 py-1.5 rounded-xl border border-[#2a2a3a] text-xs" onClick={onGenerate}>Generate Bubbles</button>
               <button className="px-3 py-1.5 rounded-xl border border-[#2a2a3a] text-xs" onClick={updateFromList}>Update from list</button>
+              <label className="flex items-center gap-1 text-xs text-[#9aa0a6]"><input type="checkbox" checked={updateMatchMode==="name"} onChange={(e)=>setUpdateMatchMode(e.target.checked ? "name" : "index")} /> match by name (safer)</label>
               <label className="flex items-center gap-1 text-xs text-[#9aa0a6]">
                 <input type="checkbox" checked={updateAreasFromList} onChange={(e)=>setUpdateAreasFromList(e.target.checked)} />
                 also update areas
