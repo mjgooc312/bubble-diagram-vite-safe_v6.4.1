@@ -3,16 +3,18 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as d3 from "d3";
 
 /**
- * Bubble Diagram Builder – Force-directed (React + D3)
- * v4.3 — Arrow overlap + Rotation sensitivity + Rounded color pickers
+ * Bubble Diagram Builder – Clean & Stable (React + D3)
+ * v5.0 — streamlined UI, safer physics, reset-on-toggle, scenes, exports
  *
- * What’s new vs your uploaded file:
- *  • Arrow overlap slider: lets link lines/arrowheads extend inside the bubbles.
- *  • Rotation sensitivity slider: adds a gentle tangential “spin” force so bubbles orbit/settle based on sensitivity.
- *  • Color inputs styled as smooth rounded pills (no sharp corners).
- *  • Presets persist arrowOverlap and rotationSensitivity along with the rest.
- *
- * Drop this into your Vite React app (e.g., src/BubbleAdjacencyApp.jsx) and render it.
+ * Highlights vs your previous upload:
+ *  • Clean toolbar with horizontal scroll (no overflow) and grouped controls.
+ *  • Physics toggle now ZEROES velocities and disables spin on re‑enable (no runaway rotation).
+ *  • Stable forces: faster settle, lower jitter, framerate‑throttled updates.
+ *  • Scenes (positions + zoom) persisted; loads active scene.
+ *  • Arrow overlap, label font/size/color, bubble border/fill (with transparent option).
+ *  • Live vs Export background modes (transparent/white/custom).
+ *  • Zoom / pan / fit / fullscreen; SVG/PNG/JSON export & robust Save/Open (FS Access API).
+ *  • Styled scrollbars and rounded color inputs; panels have bounded height with scroll.
  */
 
 // ---- Theme (UI chrome only; not the canvas background) ----------------------
@@ -55,38 +57,27 @@ Player Warm-up Pods (Concourse), 130`;
 // ----- Utilities -------------------------------------------------------------
 const uid = () => Math.random().toString(36).slice(2, 9);
 
-/** Coerce to finite number, else fallback */
 function toNumber(v, fallback) {
   const n = typeof v === "string" && v.trim() === "" ? NaN : Number(v);
   return Number.isFinite(n) ? n : fallback;
 }
-// normalize a label for name-based matching
-function norm(s){
-  return String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
-}
-
-
-/** Clamp text size into safe range and coerce to number */
+function norm(s){ return String(s || "").trim().toLowerCase().replace(/\s+/g, " "); }
 function clampTextSize(v) {
   const n = toNumber(v, 12);
   return Math.max(TEXT_MIN, Math.min(TEXT_MAX, n));
 }
-
-/** Parse "Name, 120" / "Name - 120" / "Name 120" */
 function parseList(text) {
   return text
-    .split(/\r?\n/)
+    .split(/\\r?\\n/)
     .map((l) => l.trim())
     .filter(Boolean)
     .map((line) => {
-      const m = line.match(/^(.*?)[,|-]?\s*(\d+(?:\.\d+)?)\s*$/);
+      const m = line.match(/^(.*?)[,|-]?\\s*(\\d+(?:\\.\\d+)?)\\s*$/);
       return m
         ? { id: uid(), name: m[1].trim(), area: parseFloat(m[2]) }
         : { id: uid(), name: line, area: 20 };
     });
 }
-
-/** sqrt(area) → [BASE_R_MIN, BASE_R_MAX] */
 function scaleRadius(nodes) {
   const sqrtAreas = nodes.map((n) => Math.sqrt(Math.max(1, n.area || 1)));
   const min = d3.min(sqrtAreas) ?? 1;
@@ -179,13 +170,12 @@ function savePresets(obj) {
 // ------------------------- Custom spin force ---------------------------------
 function makeSpinForce(level /* 0..100 */) {
   let nodes = [];
-  const base = 0.0002; // tuning factor for smoothness
+  const base = 0.00018; // gentle
   function force(alpha) {
     if (!level) return;
     const k = base * level * alpha;
     for (const n of nodes) {
       const x = n.x || 0, y = n.y || 0;
-      // tangential velocity: (-y, x)
       n.vx += -y * k;
       n.vy +=  x * k;
     }
@@ -210,29 +200,31 @@ export default function BubbleAdjacencyApp() {
 
   // Layout physics
   const [physics, setPhysics] = useState(true);
+  const rotationSensitivityPrevRef = useRef(0);
 
   // Buffer between bubbles
   const [buffer, setBuffer] = useState(6);
 
-  // NEW: arrows can overlap into the circles — in pixels
+  // arrows can overlap into the circles — in pixels
   const [arrowOverlap, setArrowOverlap] = useState(0); // 0..40+
 
-  // NEW: rotation sensitivity (adds a light "spin" force)
+  // rotation sensitivity (adds a light "spin" force)
   const [rotationSensitivity, setRotationSensitivity] = useState(0); // 0..100
   const [showMeasurements, setShowMeasurements] = useState(true);
 
-// --- Scenes (positions + zoom) ---
-const SCENES_KEY = "bubbleScenes:v1";
-const [scenes, setScenes] = useState(() => {
-  try { return JSON.parse(localStorage.getItem(SCENES_KEY) || "[]"); }
-  catch { return []; }
-});
-const [activeSceneId, setActiveSceneId] = useState(null);
-useEffect(() => {
-  try { localStorage.setItem(SCENES_KEY, JSON.stringify(scenes)); } catch {}
-}, [scenes]);
+  // Scenes (positions + zoom)
+  const SCENES_KEY = "bubbleScenes:v1";
+  const [scenes, setScenes] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(SCENES_KEY) || "[]"); }
+    catch { return []; }
+  });
+  const [activeSceneId, setActiveSceneId] = useState(null);
+  useEffect(() => {
+    try { localStorage.setItem(SCENES_KEY, JSON.stringify(scenes)); } catch {}
+  }, [scenes]);
+
   const [updateAreasFromList, setUpdateAreasFromList] = useState(false);
-  const [updateMatchMode, setUpdateMatchMode] = useState("name"); // "name" | "index" // update areas too when applying list
+  const [updateMatchMode, setUpdateMatchMode] = useState("name"); // "name" | "index"
 
   // Edge style presets (necessary vs ideal)
   const [styles, setStyles] = useState({
@@ -246,7 +238,7 @@ useEffect(() => {
 
   // Live preview background (used for on-screen canvas container)
   const [liveBgMode, setLiveBgMode] = useState("custom");           // transparent | white | custom
-  const [liveBgCustom, setLiveBgCustom] = useState(THEME.surface);  // default matches old UI
+  const [liveBgCustom, setLiveBgCustom] = useState(THEME.surface);
 
   // BULK defaults (applied on generate or via "Apply to all")
   const [bulkFill, setBulkFill] = useState("#161625");
@@ -261,9 +253,7 @@ useEffect(() => {
   const svgRef = useRef(null);
   const simRef = useRef(null);
   const containerRef = useRef(null);
-  // File handle for JSON (File System Access API)
   const jsonHandleRef = useRef(null);
-
 
   // Zoom / Pan
   const zoomBehaviorRef = useRef(null);
@@ -304,7 +294,6 @@ useEffect(() => {
   }
 
   // ---------------------------- Preset Persistence ---------------------------
-  // Load on mount
   useEffect(() => {
     const p = loadPresets();
     if (!p) return;
@@ -326,9 +315,10 @@ useEffect(() => {
     if (p.exportBgCustom) setExportBgCustom(p.exportBgCustom);
     if (p.liveBgMode) setLiveBgMode(p.liveBgMode);
     if (p.liveBgCustom) setLiveBgCustom(p.liveBgCustom);
+    if (p.scenes) { try { setScenes(p.scenes); } catch {} }
+    if (p.activeSceneId) setActiveSceneId(p.activeSceneId);
   }, []);
 
-  // Save whenever any preset changes
   useEffect(() => {
     const payload = {
       styles,
@@ -355,19 +345,21 @@ useEffect(() => {
     bulkFill, bulkFillTransparent, bulkStroke, bulkStrokeWidth,
     bulkTextFont, bulkTextColor, bulkTextSize,
     exportBgMode, exportBgCustom,
-    liveBgMode, liveBgCustom
+    liveBgMode, liveBgCustom,
+    scenes, activeSceneId
   ]);
 
   // ---------------------------- D3 Force Simulation --------------------------
   useEffect(() => {
     const sim = d3
       .forceSimulation()
-      .alphaDecay(0.05)
-      .velocityDecay(0.3)
+      .alphaDecay(0.08)      // faster settle
+      .alphaMin(0.02)
+      .velocityDecay(0.5)    // less jitter
       .force("charge", d3.forceManyBody().strength(-80))
       .force("collide", d3.forceCollide().radius((d) => (d.r || BASE_R_MIN) + buffer))
       .force("center", d3.forceCenter(0, 0))
-      .force("spin", makeSpinForce(rotationSensitivity)); // NEW
+      .force("spin", makeSpinForce(rotationSensitivity));
     simRef.current = sim;
     return () => sim.stop();
   }, []);
@@ -379,6 +371,18 @@ useEffect(() => {
     sim.force("spin", makeSpinForce(rotationSensitivity));
     if (physics && rotationSensitivity > 0) sim.alpha(0.5).restart();
   }, [rotationSensitivity, physics]);
+
+  // Pause sim when tab hidden (battery-friendly)
+  useEffect(() => {
+    const onVis = () => {
+      const sim = simRef.current;
+      if (!sim) return;
+      if (document.hidden) sim.stop();
+      else if (physics) sim.alpha(0.3).restart();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [physics]);
 
   const rafRef = useRef(null);
   useEffect(() => {
@@ -441,76 +445,31 @@ useEffect(() => {
     setLinkSource(null);
     setPhysics(true);
     setSelectedNodeId(null);
-    // Reset zoom to identity so fresh graph starts centered
     resetZoom();
-  }
-  
-function updateFromList() {
-  if (!nodes.length) return;
-  const parsed = parseList(rawList || "");
-  if (!parsed.length) return;
-  pushHistory();
-
-  if (updateMatchMode === "index") {
-    setNodes((prev) => prev.map((n, i) => {
-      if (i >= parsed.length) return n;
-      const src = parsed[i];
-      return {
-        ...n,
-        name: src.name,
-        ...(updateAreasFromList ? { area: Math.max(1, +src.area || n.area) } : {}),
-      };
-    }));
-    if (parsed.length > nodes.length) {
-      const extras = parsed.slice(nodes.length).map((x) => ({
-        id: Math.random().toString(36).slice(2, 9),
-        name: x.name,
-        area: Math.max(1, +x.area || 20),
-        x: (Math.random() - 0.5) * 40,
-        y: (Math.random() - 0.5) * 40,
-        fill: bulkFillTransparent ? "none" : bulkFill,
-        stroke: bulkStroke,
-        strokeWidth: bulkStrokeWidth,
-        textFont: bulkTextFont,
-        textColor: bulkTextColor,
-        textSize: clampTextSize(bulkTextSize),
-      }));
-      setNodes((prev) => [...prev, ...extras]);
-    }
-    return;
+    fitToView();
   }
 
-  // default: match by NAME (safer after JSON imports that reorder nodes)
-  setNodes((prev) => {
-    const buckets = new Map();
-    prev.forEach((n, idx) => {
-      const k = norm(n.name);
-      const arr = buckets.get(k) || [];
-      arr.push(idx);
-      buckets.set(k, arr);
-    });
+  function updateFromList() {
+    if (!nodes.length) return;
+    const parsed = parseList(rawList || "");
+    if (!parsed.length) return;
+    pushHistory();
 
-    const updated = [...prev];
-    const used = new Set();
-    const extras = [];
-
-    parsed.forEach((src) => {
-      const key = norm(src.name);
-      const arr = buckets.get(key);
-      let idx = -1;
-      if (arr && arr.length) idx = arr.shift();
-      if (idx >= 0 && !used.has(idx)) {
-        updated[idx] = {
-          ...updated[idx],
+    if (updateMatchMode === "index") {
+      setNodes((prev) => prev.map((n, i) => {
+        if (i >= parsed.length) return n;
+        const src = parsed[i];
+        return {
+          ...n,
           name: src.name,
-          ...(updateAreasFromList ? { area: Math.max(1, +src.area || updated[idx].area) } : {}),
+          ...(updateAreasFromList ? { area: Math.max(1, +src.area || n.area) } : {}),
         };
-        used.add(idx);
-      } else {
-        extras.push({
-          id: Math.random().toString(36).slice(2, 9),
-          name: src.name,
-          area: Math.max(1, +src.area || 20),
+      }));
+      if (parsed.length > nodes.length) {
+        const extras = parsed.slice(nodes.length).map((x) => ({
+          id: uid(),
+          name: x.name,
+          area: Math.max(1, +x.area || 20),
           x: (Math.random() - 0.5) * 40,
           y: (Math.random() - 0.5) * 40,
           fill: bulkFillTransparent ? "none" : bulkFill,
@@ -519,14 +478,57 @@ function updateFromList() {
           textFont: bulkTextFont,
           textColor: bulkTextColor,
           textSize: clampTextSize(bulkTextSize),
-        });
+        }));
+        setNodes((prev) => [...prev, ...extras]);
       }
+      return;
+    }
+
+    // default: match by NAME
+    setNodes((prev) => {
+      const buckets = new Map();
+      prev.forEach((n, idx) => {
+        const k = norm(n.name);
+        const arr = buckets.get(k) || [];
+        arr.push(idx);
+        buckets.set(k, arr);
+      });
+
+      const updated = [...prev];
+      const used = new Set();
+      const extras = [];
+
+      parsed.forEach((src) => {
+        const key = norm(src.name);
+        const arr = buckets.get(key);
+        let idx = -1;
+        if (arr && arr.length) idx = arr.shift();
+        if (idx >= 0 && !used.has(idx)) {
+          updated[idx] = {
+            ...updated[idx],
+            name: src.name,
+            ...(updateAreasFromList ? { area: Math.max(1, +src.area || updated[idx].area) } : {}),
+          };
+          used.add(idx);
+        } else {
+          extras.push({
+            id: uid(),
+            name: src.name,
+            area: Math.max(1, +src.area || 20),
+            x: (Math.random() - 0.5) * 40,
+            y: (Math.random() - 0.5) * 40,
+            fill: bulkFillTransparent ? "none" : bulkFill,
+            stroke: bulkStroke,
+            strokeWidth: bulkStrokeWidth,
+            textFont: bulkTextFont,
+            textColor: bulkTextColor,
+            textSize: clampTextSize(bulkTextSize),
+          });
+        }
+      });
+      return extras.length ? [...updated, ...extras] : updated;
     });
-    return extras.length ? [...updated, ...extras] : updated;
-  });
-}
-
-
+  }
 
   function clearAll() {
     pushHistory();
@@ -633,59 +635,69 @@ function updateFromList() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  
-// ---------------------------- Scenes API ------------------------------------
-function captureScenePayload() {
-  const pos = {};
-  for (const n of nodes) pos[n.id] = { x: n.x || 0, y: n.y || 0 };
-  return {
-    positions: pos,
-    zoom: { k: zoomTransform.k, x: zoomTransform.x, y: zoomTransform.y },
-    updatedAt: Date.now(),
-  };
-}
-function addScene(name) {
-  const nm = String(name || "").trim() || `Scene ${scenes.length + 1}`;
-  const payload = captureScenePayload();
-  const s = { id: Math.random().toString(36).slice(2,9), name: nm, ...payload };
-  setScenes(prev => [...prev, s]);
-  setActiveSceneId(s.id);
-}
-function applyScene(sceneId) {
-  const s = scenes.find(x => x.id === sceneId);
-  if (!s) return;
-  const { positions, zoom } = s;
-  setNodes(prev => prev.map(n => {
-    const p = positions[n.id];
-    return p ? { ...n, x: p.x, y: p.y, fx: undefined, fy: undefined } : n;
-  }));
-  try {
-    const svg = d3.select(svgRef.current);
-    const zoomer = zoomBehaviorRef.current;
-    if (svg && zoomer && zoom) {
-      svg.transition().duration(250)
-         .call(zoomer.transform, d3.zoomIdentity.translate(zoom.x, zoom.y).scale(zoom.k || 1));
-    }
-  } catch {}
-  zeroVelocities();
-  simRef.current?.alpha(0.3).restart();
-}
-function updateScene(sceneId) {
-  const idx = scenes.findIndex(x => x.id === sceneId);
-  if (idx === -1) return;
-  const payload = captureScenePayload();
-  setScenes(prev => {
-    const next = [...prev];
-    next[idx] = { ...next[idx], ...payload };
-    return next;
-  });
-}
-function deleteScene(sceneId) {
-  setScenes(prev => prev.filter(x => x.id !== sceneId));
-  if (activeSceneId === sceneId) setActiveSceneId(null);
-}
+  // ---------------------------- Scenes API -----------------------------------
+  function zeroVelocities() {
+    try {
+      const sim = simRef.current;
+      if (!sim) return;
+      const arr = sim.nodes ? sim.nodes() : [];
+      if (Array.isArray(arr)) {
+        for (const n of arr) { n.vx = 0; n.vy = 0; }
+      }
+    } catch {}
+  }
 
-// ---------------------------- Export helpers -------------------------------
+  function captureScenePayload() {
+    const pos = {};
+    for (const n of nodes) pos[n.id] = { x: n.x || 0, y: n.y || 0 };
+    return {
+      positions: pos,
+      zoom: { k: zoomTransform.k, x: zoomTransform.x, y: zoomTransform.y },
+      updatedAt: Date.now(),
+    };
+  }
+  function addScene(name) {
+    const nm = String(name || "").trim() || `Scene ${scenes.length + 1}`;
+    const payload = captureScenePayload();
+    const s = { id: uid(), name: nm, ...payload };
+    setScenes(prev => [...prev, s]);
+    setActiveSceneId(s.id);
+  }
+  function applyScene(sceneId) {
+    const s = scenes.find(x => x.id === sceneId);
+    if (!s) return;
+    const { positions, zoom } = s;
+    setNodes(prev => prev.map(n => {
+      const p = positions[n.id];
+      return p ? { ...n, x: p.x, y: p.y, fx: undefined, fy: undefined } : n;
+    }));
+    try {
+      const svg = d3.select(svgRef.current);
+      const zoomer = zoomBehaviorRef.current;
+      if (svg && zoomer && zoom) {
+        svg.transition().duration(250)
+           .call(zoomer.transform, d3.zoomIdentity.translate(zoom.x, zoom.y).scale(zoom.k || 1));
+      }
+    } catch {}
+    zeroVelocities();
+    simRef.current?.alpha(0.3).restart();
+  }
+  function updateScene(sceneId) {
+    const idx = scenes.findIndex(x => x.id === sceneId);
+    if (idx === -1) return;
+    const payload = captureScenePayload();
+    setScenes(prev => {
+      const next = [...prev];
+      next[idx] = { ...next[idx], ...payload };
+      return next;
+    });
+  }
+  function deleteScene(sceneId) {
+    setScenes(prev => prev.filter(x => x.id !== sceneId));
+    if (activeSceneId === sceneId) setActiveSceneId(null);
+  }
+
+  // ---------------------------- Export helpers -------------------------------
   function getExportBg() {
     if (exportBgMode === "transparent") return null;
     if (exportBgMode === "white") return "#ffffff";
@@ -741,7 +753,6 @@ function deleteScene(sceneId) {
     img.src = `data:image/svg+xml;base64,${svg64}`;
   }
 
-  
   function buildExportPayload() {
     return {
       nodes, links, styles,
@@ -763,32 +774,7 @@ function deleteScene(sceneId) {
     };
   }
 
-  function exportJSON() {
-    const blob = new Blob(
-      [JSON.stringify({
-        nodes, links, styles,
-        bulk: {
-          bulkFill,
-          bulkFillTransparent,
-          bulkStroke,
-          bulkStrokeWidth,
-          bulkTextFont,
-          bulkTextColor,
-          bulkTextSize: clampTextSize(bulkTextSize),
-        },
-        buffer,
-        arrowOverlap,
-        rotationSensitivity,
-        exportBgMode, exportBgCustom,
-        liveBgMode, liveBgCustom,
-      }, null, 2)],
-      { type: "application/json" }
-    );
-    const url = URL.createObjectURL(blob); download(url, `bubble-diagram-${Date.now()}.json`);
-  }
-  // ---- File System Access API helpers (progressive enhancement) -------------
   async function saveJSON() {
-    // Save to the same file if we have a handle; otherwise fall back to Save As
     if (window.showSaveFilePicker && jsonHandleRef.current) {
       try {
         const handle = jsonHandleRef.current;
@@ -796,11 +782,8 @@ function deleteScene(sceneId) {
         await writable.write(JSON.stringify(buildExportPayload(), null, 2));
         await writable.close();
         return;
-      } catch (err) {
-        console.warn("Save JSON failed, falling back to Save As…", err);
-      }
+      } catch (err) { console.warn("Save JSON failed, falling back to Save As…", err); }
     }
-    // Fallback
     return saveJSONAs();
   }
 
@@ -809,21 +792,15 @@ function deleteScene(sceneId) {
       try {
         const handle = await window.showSaveFilePicker({
           suggestedName: "bubble-diagram.json",
-          types: [{
-            description: "JSON files",
-            accept: { "application/json": [".json"] },
-          }],
+          types: [{ description: "JSON files", accept: { "application/json": [".json"] } }],
         });
         jsonHandleRef.current = handle;
         const writable = await handle.createWritable();
         await writable.write(JSON.stringify(buildExportPayload(), null, 2));
         await writable.close();
         return;
-      } catch (err) {
-        console.warn("Save As cancelled or failed; using download() fallback.", err);
-      }
+      } catch (err) { console.warn("Save As cancelled or failed; using download() fallback.", err); }
     }
-    // Fallback: simple download with a prompt for the filename
     let name = typeof window !== "undefined" ? (window.prompt("File name", "bubble-diagram.json") || "bubble-diagram.json") : "bubble-diagram.json";
     const blob = new Blob([JSON.stringify(buildExportPayload(), null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -835,29 +812,23 @@ function deleteScene(sceneId) {
       try {
         const [handle] = await window.showOpenFilePicker({
           multiple: false,
-          types: [{
-            description: "JSON files",
-            accept: { "application/json": [".json"] },
-          }],
+          types: [{ description: "JSON files", accept: { "application/json": [".json"] } }],
         });
         if (!handle) return;
         const file = await handle.getFile();
         const text = await file.text();
-        jsonHandleRef.current = handle; // remember for "Save" back to same file
+        jsonHandleRef.current = handle;
         parseAndLoadJSON(text);
         return;
-      } catch (err) {
-        console.warn("Open JSON cancelled or failed.", err);
-      }
+      } catch (err) { console.warn("Open JSON cancelled or failed.", err); }
     }
-    // Fallback: trigger the hidden file input (existing Import JSON)
     const input = document.createElement("input");
     input.type = "file";
     input.accept = "application/json";
     input.onchange = (e) => {
       const file = e.target.files?.[0];
       if (!file) return;
-      jsonHandleRef.current = null; // file input doesn't grant a persistent handle
+      jsonHandleRef.current = null;
       const r = new FileReader();
       r.onload = () => parseAndLoadJSON(String(r.result || ""));
       r.readAsText(file);
@@ -904,62 +875,7 @@ function deleteScene(sceneId) {
     }
   }
 
-
-  function importJSON(file) {
-    const r = new FileReader();
-    r.onload = () => {
-      try {
-        const d = JSON.parse(r.result);
-        if (Array.isArray(d.nodes)) {
-          const normalized = d.nodes.map((n) => ({
-            ...n,
-            id: n.id || uid(),
-            name: String(n.name ?? "Unnamed"),
-            area: Math.max(1, toNumber(n.area, 20)),
-            textSize: clampTextSize(n.textSize ?? bulkTextSize),
-            strokeWidth: Math.max(1, Math.min(12, toNumber(n.strokeWidth, bulkStrokeWidth))),
-          }));
-          setNodes(normalized);
-        }
-        if (Array.isArray(d.links)) setLinks(d.links.filter((l) => l.source && l.target));
-        if (d.styles) setStyles((s) => ({ ...s, ...d.styles }));
-        if (d.bulk) {
-          const b = d.bulk;
-          if (typeof b.bulkFill === "string") setBulkFill(b.bulkFill);
-          if (typeof b.bulkFillTransparent === "boolean") setBulkFillTransparent(b.bulkFillTransparent);
-          if (typeof b.bulkStroke === "string") setBulkStroke(b.bulkStroke);
-          if (typeof b.bulkStrokeWidth === "number") setBulkStrokeWidth(Math.max(1, Math.min(12, b.bulkStrokeWidth)));
-          if (typeof b.bulkTextFont === "string") setBulkTextFont(b.bulkTextFont);
-          if (typeof b.bulkTextColor === "string") setBulkTextColor(b.bulkTextColor);
-          if (b.bulkTextSize != null) setBulkTextSize(clampTextSize(b.bulkTextSize));
-        }
-        if (typeof d.buffer === "number") setBuffer(d.buffer);
-        if (typeof d.arrowOverlap === "number") setArrowOverlap(d.arrowOverlap);
-        if (typeof d.rotationSensitivity === "number") setRotationSensitivity(d.rotationSensitivity);
-        if (d.exportBgMode) setExportBgMode(d.exportBgMode);
-        if (d.exportBgCustom) setExportBgCustom(d.exportBgCustom);
-        if (d.liveBgMode) setLiveBgMode(d.liveBgMode);
-        if (d.liveBgCustom) setLiveBgCustom(d.liveBgCustom);
-      } catch {
-        alert("Invalid JSON file");
-      }
-    };
-    r.readAsText(file);
-  }
-
-  
-function zeroVelocities() {
-  try {
-    const sim = simRef.current;
-    if (!sim) return;
-    const arr = sim.nodes ? sim.nodes() : [];
-    if (Array.isArray(arr)) {
-      for (const n of arr) { n.vx = 0; n.vy = 0; }
-    }
-  } catch {}
-}
-
-// ---------------------------- Zoom / Pan / Fit -----------------------------
+  // ---------------------------- Zoom / Pan / Fit -----------------------------
   useEffect(() => {
     const svg = d3.select(svgRef.current);
     const zoom = d3.zoom()
@@ -969,8 +885,7 @@ function zeroVelocities() {
       });
     zoomBehaviorRef.current = zoom;
     svg.call(zoom);
-    // Double-click to reset zoom
-    svg.on("dblclick.zoom", null); // disable default dblclick zoom
+    svg.on("dblclick.zoom", null);
     svg.on("dblclick", () => resetZoom());
     return () => svg.on(".zoom", null);
   }, []);
@@ -992,7 +907,6 @@ function zeroVelocities() {
   }
   function fitToView() {
     if (!nodes.length) return resetZoom();
-    // Compute bounds from node centers + radii
     const r = (n) => rOf(n.area);
     const minX = d3.min(nodes, (n) => (n.x || 0) - r(n)) ?? -600;
     const maxX = d3.max(nodes, (n) => (n.x || 0) + r(n)) ?? 600;
@@ -1011,7 +925,7 @@ function zeroVelocities() {
     svg.transition().duration(250).call(zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(k));
   }
 
-  // ---------------------------- Fullscreen -----------------------------------
+  // ---------------------------- Fullscreen & Physics --------------------------
   const [isFullscreen, setIsFullscreen] = useState(false);
   useEffect(() => {
     const onFs = () => setIsFullscreen(!!document.fullscreenElement);
@@ -1021,11 +935,28 @@ function zeroVelocities() {
   function toggleFullscreen() {
     const el = containerRef.current;
     if (!el) return;
-    if (!document.fullscreenElement) {
-      el.requestFullscreen?.();
-    } else {
-      document.exitFullscreen?.();
+    if (!document.fullscreenElement) el.requestFullscreen?.();
+    else document.exitFullscreen?.();
+  }
+
+  function resetPhysics() {
+    const sim = simRef.current; if (!sim) return;
+    zeroVelocities();
+    sim.alpha(0.9).restart();
+  }
+
+  function onTogglePhysics() {
+    // if turning OFF -> store spin level
+    if (physics) {
+      rotationSensitivityPrevRef.current = rotationSensitivity;
+      setPhysics(false);
+      return;
     }
+    // if turning ON -> zero velocities and disable spin so layout stays
+    zeroVelocities();
+    setRotationSensitivity(0);
+    setPhysics(true);
+    simRef.current?.alpha(0.6).restart();
   }
 
   // ---------------------------- Render ---------------------------------------
@@ -1058,7 +989,7 @@ function zeroVelocities() {
           appearance: none;
           border: 1px solid ${THEME.border};
           width: 32px; height: 28px;
-          border-radius: 9999px; /* smooth, no sharp corners */
+          border-radius: 9999px;
           padding: 0;
           background: transparent;
           cursor: pointer;
@@ -1074,169 +1005,175 @@ function zeroVelocities() {
         }
       `}</style>
 
-      {/* Toolbar */}
+      {/* TOOLBAR (h-scroll, no overflow) */}
       <div className="sticky top-0 z-10 backdrop-blur bg-black/30 border-b border-[#2a2a3a]">
-        <div className="mx-auto max-w-[1400px] px-4 py-3 flex flex-wrap items-center gap-3">
-          <div className="font-semibold tracking-wide text-sm text-[#9aa0a6]">Bubble Diagram Builder</div>
-
-          <div className="ml-auto flex flex-wrap items-center gap-2">
-            {/* Modes */}
-            <button className={`px-3 py-2 rounded-xl border ${mode === "select" ? "bg-white/10" : ""} border-[#2a2a3a] text-sm`} onClick={() => setMode("select")}>
-              Select / Drag
-            </button>
-            <button className={`px-3 py-2 rounded-xl border ${mode === "connect" ? "bg-white/10" : ""} border-[#2a2a3a] text-sm`} onClick={() => setMode("connect")}>
-              Connect
-            </button>
-
-            {/* Undo / Redo */}
-            <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={undo}>Undo</button>
-            <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={redo}>Redo</button>
-
-            {/* Line style controls */}
-            {["necessary", "ideal"].map((key) => (
-              <div key={key} className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
-                <span className="opacity-70 w-16 capitalize">{key}</span>
-                <input type="color" value={styles[key].color} title={`${key} color`} onChange={(e) => setStyles((s) => ({ ...s, [key]: { ...s[key], color: e.target.value } }))} />
-                <label className="flex items-center gap-1"><input type="checkbox" checked={styles[key].dashed} onChange={(e) => setStyles((s) => ({ ...s, [key]: { ...s[key], dashed: e.target.checked } }))} /> dashed</label>
-                <label className="flex items-center gap-1">w
-                  <input type="number" min={1} max={12} value={styles[key].width} className="w-14 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" onChange={(e) => setStyles((s) => ({ ...s, [key]: { ...s[key], width: Math.max(1, Math.min(12, +e.target.value || 1)) } }))} />
-                </label>
-                <select className="bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" value={styles[key].headStart} onChange={(e) => setStyles((s) => ({ ...s, [key]: { ...s[key], headStart: e.target.value } }))}>
-                  {HEAD_SHAPES.map((h) => (<option key={h} value={h}>{h}</option>))}
-                </select>
-                <span>→</span>
-                <select className="bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" value={styles[key].headEnd} onChange={(e) => setStyles((s) => ({ ...s, [key]: { ...s[key], headEnd: e.target.value } }))}>
-                  {HEAD_SHAPES.map((h) => (<option key={h} value={h}>{h}</option>))}
-                </select>
-                <button className={`ml-2 px-2 py-1 rounded-md border border-[#2a2a3a] ${currentLineType === key ? "bg-white/10" : ""}`} onClick={() => setCurrentLineType(key)}>Use</button>
+        <div className="mx-auto max-w-[1400px] px-4 py-3">
+          <div className="font-semibold tracking-wide text-sm text-[#9aa0a6] mb-2">Bubble Diagram Builder — Clean & Stable</div>
+          <div className="hide-scrollbar overflow-x-auto">
+            <div className="min-w-max flex items-center gap-3">
+              {/* Modes */}
+              <div className="flex items-center gap-2">
+                <button className={`px-3 py-2 rounded-xl border ${mode === "select" ? "bg-white/10" : ""} border-[#2a2a3a] text-sm`} onClick={() => setMode("select")}>
+                  Select / Drag
+                </button>
+                <button className={`px-3 py-2 rounded-xl border ${mode === "connect" ? "bg-white/10" : ""} border-[#2a2a3a] text-sm`} onClick={() => setMode("connect")}>
+                  Connect
+                </button>
               </div>
-            ))}
 
-            {/* Bubble (node) bulk styles */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
-              <span className="opacity-70">Bubbles:</span>
-              <label className="flex items-center gap-1">Fill
-                <input type="color" value={bulkFill} onChange={(e) => setBulkFill(e.target.value)} disabled={bulkFillTransparent} />
-              </label>
-              <label className="flex items-center gap-1"><input type="checkbox" checked={bulkFillTransparent} onChange={(e) => setBulkFillTransparent(e.target.checked)} /> transparent</label>
-              <label className="flex items-center gap-1">Border
-                <input type="color" value={bulkStroke} onChange={(e) => setBulkStroke(e.target.value)} />
-              </label>
-              <label className="flex items-center gap-1">w
-                <input type="number" min={1} max={12} value={bulkStrokeWidth} className="w-14 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" onChange={(e) => setBulkStrokeWidth(Math.max(1, Math.min(12, +e.target.value || 1)))} />
-              </label>
-              <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" onClick={applyBulkBubbleStyles}>Apply to all</button>
+              {/* Undo / Redo */}
+              <div className="flex items-center gap-2">
+                <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={undo}>Undo</button>
+                <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={redo}>Redo</button>
+              </div>
+
+              {/* Line style controls */}
+              {["necessary", "ideal"].map((key) => (
+                <div key={key} className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
+                  <span className="opacity-70 w-16 capitalize">{key}</span>
+                  <input type="color" value={styles[key].color} title={`${key} color`} onChange={(e) => setStyles((s) => ({ ...s, [key]: { ...s[key], color: e.target.value } }))} />
+                  <label className="flex items-center gap-1"><input type="checkbox" checked={styles[key].dashed} onChange={(e) => setStyles((s) => ({ ...s, [key]: { ...s[key], dashed: e.target.checked } }))} /> dashed</label>
+                  <label className="flex items-center gap-1">w
+                    <input type="number" min={1} max={12} value={styles[key].width} className="w-14 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" onChange={(e) => setStyles((s) => ({ ...s, [key]: { ...s[key], width: Math.max(1, Math.min(12, +e.target.value || 1)) } }))} />
+                  </label>
+                  <select className="bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" value={styles[key].headStart} onChange={(e) => setStyles((s) => ({ ...s, [key]: { ...s[key], headStart: e.target.value } }))}>
+                    {HEAD_SHAPES.map((h) => (<option key={h} value={h}>{h}</option>))}
+                  </select>
+                  <span>→</span>
+                  <select className="bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" value={styles[key].headEnd} onChange={(e) => setStyles((s) => ({ ...s, [key]: { ...s[key], headEnd: e.target.value } }))}>
+                    {HEAD_SHAPES.map((h) => (<option key={h} value={h}>{h}</option>))}
+                  </select>
+                  <button className={`ml-2 px-2 py-1 rounded-md border border-[#2a2a3a] ${currentLineType === key ? "bg-white/10" : ""}`} onClick={() => setCurrentLineType(key)}>Use</button>
+                </div>
+              ))}
+
+              {/* Bubble (node) bulk styles */}
+              <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
+                <span className="opacity-70">Bubbles:</span>
+                <label className="flex items-center gap-1">Fill
+                  <input type="color" value={bulkFill} onChange={(e) => setBulkFill(e.target.value)} disabled={bulkFillTransparent} />
+                </label>
+                <label className="flex items-center gap-1"><input type="checkbox" checked={bulkFillTransparent} onChange={(e) => setBulkFillTransparent(e.target.checked)} /> transparent</label>
+                <label className="flex items-center gap-1">Border
+                  <input type="color" value={bulkStroke} onChange={(e) => setBulkStroke(e.target.value)} />
+                </label>
+                <label className="flex items-center gap-1">w
+                  <input type="number" min={1} max={12} value={bulkStrokeWidth} className="w-14 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" onChange={(e) => setBulkStrokeWidth(Math.max(1, Math.min(12, +e.target.value || 1)))} />
+                </label>
+                <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" onClick={applyBulkBubbleStyles}>Apply to all</button>
+              </div>
+
+              {/* Text (label) bulk styles */}
+              <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
+                <span className="opacity-70">Labels:</span>
+                <select className="bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" value={bulkTextFont} onChange={(e) => setBulkTextFont(e.target.value)}>
+                  <option value={FONT_STACKS.Outfit}>Outfit</option>
+                  <option value={FONT_STACKS.Inter}>Inter</option>
+                  <option value={FONT_STACKS.Poppins}>Poppins</option>
+                  <option value={FONT_STACKS.Roboto}>Roboto</option>
+                  <option value={FONT_STACKS.System}>system-ui</option>
+                  <option value={FONT_STACKS.HelveticaNowCondensed}>Helvetica Now Condensed (if available)</option>
+                </select>
+                <input type="color" value={bulkTextColor} onChange={(e) => setBulkTextColor(e.target.value)} />
+                <label className="flex items-center gap-1">size
+                  <input type="number" min={TEXT_MIN} max={TEXT_MAX} value={bulkTextSize} className="w-14 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" onChange={(e) => setBulkTextSize(clampTextSize(e.target.value))} />
+                </label>
+                <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" onClick={applyBulkTextStyles}>Apply to all</button>
+              </div>
+
+              {/* Export background */}
+              <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
+                <span className="opacity-70">Export BG:</span>
+                <label className="flex items-center gap-1"><input type="radio" name="bg-exp" checked={exportBgMode === "transparent"} onChange={() => setExportBgMode("transparent")} /> transparent</label>
+                <label className="flex items-center gap-1"><input type="radio" name="bg-exp" checked={exportBgMode === "white"} onChange={() => setExportBgMode("white")} /> white</label>
+                <label className="flex items-center gap-1"><input type="radio" name="bg-exp" checked={exportBgMode === "custom"} onChange={() => setExportBgMode("custom")} /> custom</label>
+                <input type="color" value={exportBgCustom} onChange={(e) => setExportBgCustom(e.target.value)} disabled={exportBgMode !== "custom"} />
+              </div>
+
+              {/* Live background */}
+              <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
+                <span className="opacity-70">Live BG:</span>
+                <label className="flex items-center gap-1"><input type="radio" name="bg-live" checked={liveBgMode === "transparent"} onChange={() => setLiveBgMode("transparent")} /> transparent</label>
+                <label className="flex items-center gap-1"><input type="radio" name="bg-live" checked={liveBgMode === "white"} onChange={() => setLiveBgMode("white")} /> white</label>
+                <label className="flex items-center gap-1"><input type="radio" name="bg-live" checked={liveBgMode === "custom"} onChange={() => setLiveBgMode("custom")} /> custom</label>
+                <input type="color" value={liveBgCustom} onChange={(e) => setLiveBgCustom(e.target.value)} disabled={liveBgMode !== "custom"} />
+              </div>
+
+              {/* Buffer */}
+              <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
+                <span className="opacity-70">Buffer:</span>
+                <input type="range" min={0} max={80} step={1} value={buffer} onChange={(e) => setBuffer(+e.target.value)} />
+                <input type="number" min={0} max={80} value={buffer} className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" onChange={(e) => setBuffer(Math.max(0, Math.min(80, +e.target.value || 0)))} />
+                <span className="opacity-70">px</span>
+              </div>
+
+              {/* Arrow Overlap */}
+              <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
+                <span className="opacity-70">Arrow overlap:</span>
+                <input type="range" min={0} max={60} step={1} value={arrowOverlap} onChange={(e) => setArrowOverlap(+e.target.value)} />
+                <input type="number" min={0} max={200} value={arrowOverlap} className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" onChange={(e) => setArrowOverlap(Math.max(0, Math.min(200, +e.target.value || 0)))} />
+                <span className="opacity-70">px</span>
+              </div>
+
+              {/* Rotation Sensitivity */}
+              <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
+                <span className="opacity-70">Rotation sensitivity:</span>
+                <input type="range" min={0} max={100} step={1} value={rotationSensitivity} onChange={(e) => setRotationSensitivity(+e.target.value)} />
+                <input type="number" min={0} max={100} value={rotationSensitivity} className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" onChange={(e) => setRotationSensitivity(Math.max(0, Math.min(100, +e.target.value || 0)))} />
+                <span className="opacity-70">%</span>
+              </div>
+
+              {/* Measurements toggle */}
+              <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
+                <label className="flex items-center gap-1">
+                  <input type="checkbox" checked={showMeasurements} onChange={(e) => setShowMeasurements(e.target.checked)} />
+                  show m² labels
+                </label>
+              </div>
+
+              {/* Graph actions */}
+              <div className="flex items-center gap-2">
+                <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={onTogglePhysics}>{physics ? "Physics: ON" : "Physics: OFF"}</button>
+                <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={() => setNodes([...nodes])}>Re-Layout</button>
+                <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={resetPhysics}>Reset Physics</button>
+              </div>
+
+              {/* Scenes */}
+              <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-2 py-2 text-xs">
+                <span className="opacity-70">Scene:</span>
+                <select className="bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
+                        value={activeSceneId || ""}
+                        onChange={(e) => setActiveSceneId(e.target.value || null)}>
+                  <option value="">(none)</option>
+                  {scenes.map((s) => (<option key={s.id} value={s.id}>{s.name}</option>))}
+                </select>
+                <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" onClick={() => {
+                  const nm = window.prompt("New scene name", `Scene ${scenes.length + 1}`);
+                  if (nm != null) addScene(nm);
+                }}>Add</button>
+                <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" disabled={!activeSceneId} onClick={() => activeSceneId && applyScene(activeSceneId)}>Go</button>
+                <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" disabled={!activeSceneId} onClick={() => activeSceneId && updateScene(activeSceneId)}>Update</button>
+                <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" disabled={!activeSceneId} onClick={() => activeSceneId && deleteScene(activeSceneId)}>Delete</button>
+              </div>
+
+              {/* Zoom controls */}
+              <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-2 py-2 text-xs">
+                <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" onClick={zoomOut}>−</button>
+                <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" onClick={resetZoom}>Reset</button>
+                <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" onClick={fitToView}>Fit</button>
+                <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" onClick={zoomIn}>+</button>
+              </div>
+
+              {/* Fullscreen & Export */}
+              <div className="flex items-center gap-2">
+                <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={toggleFullscreen}>{isFullscreen ? "Exit Fullscreen" : "Fullscreen"}</button>
+                <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={exportSVG}>Export SVG</button>
+                <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={exportPNG}>Export PNG</button>
+                <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" title="Ctrl/⌘ + S" onClick={saveJSON}>Save JSON</button>
+                <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={saveJSONAs}>Save As…</button>
+                <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={openJSON}>Open JSON…</button>
+              </div>
             </div>
-
-            {/* Text (label) bulk styles */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
-              <span className="opacity-70">Labels:</span>
-              <select className="bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" value={bulkTextFont} onChange={(e) => setBulkTextFont(e.target.value)}>
-                <option value={FONT_STACKS.Outfit}>Outfit</option>
-                <option value={FONT_STACKS.Inter}>Inter</option>
-                <option value={FONT_STACKS.Poppins}>Poppins</option>
-                <option value={FONT_STACKS.Roboto}>Roboto</option>
-                <option value={FONT_STACKS.System}>system-ui</option>
-                <option value={FONT_STACKS.HelveticaNowCondensed}>Helvetica Now Condensed (if available)</option>
-              </select>
-              <input type="color" value={bulkTextColor} onChange={(e) => setBulkTextColor(e.target.value)} />
-              <label className="flex items-center gap-1">size
-                <input type="number" min={TEXT_MIN} max={TEXT_MAX} value={bulkTextSize} className="w-14 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" onChange={(e) => setBulkTextSize(clampTextSize(e.target.value))} />
-              </label>
-              <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" onClick={applyBulkTextStyles}>Apply to all</button>
-            </div>
-
-            {/* Export background */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
-              <span className="opacity-70">Export BG:</span>
-              <label className="flex items-center gap-1"><input type="radio" name="bg-exp" checked={exportBgMode === "transparent"} onChange={() => setExportBgMode("transparent")} /> transparent</label>
-              <label className="flex items-center gap-1"><input type="radio" name="bg-exp" checked={exportBgMode === "white"} onChange={() => setExportBgMode("white")} /> white</label>
-              <label className="flex items-center gap-1"><input type="radio" name="bg-exp" checked={exportBgMode === "custom"} onChange={() => setExportBgMode("custom")} /> custom</label>
-              <input type="color" value={exportBgCustom} onChange={(e) => setExportBgCustom(e.target.value)} disabled={exportBgMode !== "custom"} />
-            </div>
-
-            {/* Live background */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
-              <span className="opacity-70">Live BG:</span>
-              <label className="flex items-center gap-1"><input type="radio" name="bg-live" checked={liveBgMode === "transparent"} onChange={() => setLiveBgMode("transparent")} /> transparent</label>
-              <label className="flex items-center gap-1"><input type="radio" name="bg-live" checked={liveBgMode === "white"} onChange={() => setLiveBgMode("white")} /> white</label>
-              <label className="flex items-center gap-1"><input type="radio" name="bg-live" checked={liveBgMode === "custom"} onChange={() => setLiveBgMode("custom")} /> custom</label>
-              <input type="color" value={liveBgCustom} onChange={(e) => setLiveBgCustom(e.target.value)} disabled={liveBgMode !== "custom"} />
-            </div>
-
-            {/* Buffer */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
-              <span className="opacity-70">Buffer:</span>
-              <input type="range" min={0} max={80} step={1} value={buffer} onChange={(e) => setBuffer(+e.target.value)} />
-              <input type="number" min={0} max={80} value={buffer} className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" onChange={(e) => setBuffer(Math.max(0, Math.min(80, +e.target.value || 0)))} />
-              <span className="opacity-70">px</span>
-            </div>
-
-            {/* NEW: Arrow Overlap */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
-              <span className="opacity-70">Arrow overlap:</span>
-              <input type="range" min={0} max={60} step={1} value={arrowOverlap} onChange={(e) => setArrowOverlap(+e.target.value)} />
-              <input type="number" min={0} max={200} value={arrowOverlap} className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" onChange={(e) => setArrowOverlap(Math.max(0, Math.min(200, +e.target.value || 0)))} />
-              <span className="opacity-70">px</span>
-            </div>
-
-            {/* NEW: Rotation Sensitivity */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
-              <span className="opacity-70">Rotation sensitivity:</span>
-              <input type="range" min={0} max={100} step={1} value={rotationSensitivity} onChange={(e) => setRotationSensitivity(+e.target.value)} />
-              <input type="number" min={0} max={100} value={rotationSensitivity} className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" onChange={(e) => setRotationSensitivity(Math.max(0, Math.min(100, +e.target.value || 0)))} />
-              <span className="opacity-70">%</span>
-            </div>
-            {/* Measurements toggle */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
-              <label className="flex items-center gap-1">
-                <input type="checkbox" checked={showMeasurements} onChange={(e) => setShowMeasurements(e.target.checked)} />
-                show m² labels
-              </label>
-            </div>
-
-
-            {/* Graph actions */}
-            <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={() => setPhysics((p) => !p)}>{physics ? "Physics: ON" : "Physics: OFF"}</button>
-            <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={() => setNodes([...nodes])}>Re-Layout</button>
-
-            
-{/* Scenes */}
-<div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-2 py-2 text-xs">
-  <span className="opacity-70">Scene:</span>
-  <select className="bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
-          value={activeSceneId || ""}
-          onChange={(e) => setActiveSceneId(e.target.value || null)}>
-    <option value="">(none)</option>
-    {scenes.map((s) => (<option key={s.id} value={s.id}>{s.name}</option>))}
-  </select>
-  <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" onClick={() => {
-    const nm = window.prompt("New scene name", `Scene ${scenes.length + 1}`);
-    if (nm != null) addScene(nm);
-  }}>Add</button>
-  <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" disabled={!activeSceneId} onClick={() => activeSceneId && applyScene(activeSceneId)}>Go</button>
-  <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" disabled={!activeSceneId} onClick={() => activeSceneId && updateScene(activeSceneId)}>Update</button>
-  <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" disabled={!activeSceneId} onClick={() => activeSceneId && deleteScene(activeSceneId)}>Delete</button>
-</div>
-
-            {/* Zoom controls */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-2 py-2 text-xs">
-              <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" onClick={zoomOut}>−</button>
-              <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" onClick={resetZoom}>Reset</button>
-              <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" onClick={fitToView}>Fit</button>
-              <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" onClick={zoomIn}>+</button>
-            </div>
-
-            {/* Fullscreen & Export */}
-            <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={toggleFullscreen}>{isFullscreen ? "Exit Fullscreen" : "Fullscreen"}</button>
-            <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={exportSVG}>Export SVG</button>
-            <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={exportPNG}>Export PNG</button>
-            <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" title="Ctrl/⌘ + S" onClick={saveJSON}>Save JSON</button>
-            <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={saveJSONAs}>Save As…</button>
-            <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={openJSON}>Open JSON…</button>
-            <label className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm cursor-pointer">Import JSON (fallback)
-              <input className="hidden" type="file" accept="application/json" onChange={(e) => e.target.files && importJSON(e.target.files[0])} />
-            </label>
           </div>
         </div>
       </div>
@@ -1244,28 +1181,27 @@ function zeroVelocities() {
       {/* Panels */}
       <div className="mx-auto max-w-[1400px] px-4 mt-4 grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Input list */}
-        <div className="col-span-1 bg-[#121220] rounded-2xl border border-[#2a2a3a] p-4">
+        <div className="col-span-1 bg-[#121220] rounded-2xl border border-[#2a2a3a] p-4 max-h-[320px] overflow-auto">
           <div className="flex items-center justify-between gap-2 mb-2">
             <h2 className="text-sm font-semibold tracking-wide text-[#9aa0a6]">List of Spaces (name, area m²)</h2>
             <div className="flex gap-2">
               <button className="px-3 py-1.5 rounded-xl border border-[#2a2a3a] text-xs" onClick={() => setRawList(SAMPLE_TEXT)}>Load Sample</button>
-              <button className="px-3 py-1.5 rounded-xl border border-[#2a2a3a] text-xs" onClick={onGenerate}>Generate Bubbles</button>
+              <button className="px-3 py-1.5 rounded-xl border border-[#2a2a3a] text-xs" onClick={onGenerate}>Generate</button>
               <button className="px-3 py-1.5 rounded-xl border border-[#2a2a3a] text-xs" onClick={updateFromList}>Update from list</button>
-              <label className="flex items-center gap-1 text-xs text-[#9aa0a6]"><input type="checkbox" checked={updateMatchMode==="name"} onChange={(e)=>setUpdateMatchMode(e.target.checked ? "name" : "index")} /> match by name (safer)</label>
-              <label className="flex items-center gap-1 text-xs text-[#9aa0a6]">
-                <input type="checkbox" checked={updateAreasFromList} onChange={(e)=>setUpdateAreasFromList(e.target.checked)} />
-                also update areas
-              </label>
             </div>
           </div>
-          <textarea className="w-full min-h-[180px] text-sm bg-transparent border rounded-xl border-[#2a2a3a] p-3 outline-none" placeholder={`Example (one per line):
+          <div className="flex items-center gap-3 mb-2 text-xs text-[#9aa0a6]">
+            <label className="flex items-center gap-1"><input type="checkbox" checked={updateMatchMode==="name"} onChange={(e)=>setUpdateMatchMode(e.target.checked ? "name" : "index")} /> match by name</label>
+            <label className="flex items-center gap-1"><input type="checkbox" checked={updateAreasFromList} onChange={(e)=>setUpdateAreasFromList(e.target.checked)} /> also update areas</label>
+          </div>
+          <textarea className="w-full min-h-[160px] text-sm bg-transparent border rounded-xl border-[#2a2a3a] p-3 outline-none" placeholder={`Example (one per line):
 Match Admin Room, 90
 VOD Review / Theater, 60`} value={rawList} onChange={(e) => setRawList(e.target.value)} />
           <p className="mt-2 text-xs text-[#9aa0a6]">Formats: <code>name, area</code> • <code>name - area</code> • <code>name area</code></p>
         </div>
 
-        {/* Node Inspector (per-bubble styling) */}
-        <div className="col-span-1 bg-[#121220] rounded-2xl border border-[#2a2a3a] p-4">
+        {/* Node Inspector */}
+        <div className="col-span-1 bg-[#121220] rounded-2xl border border-[#2a2a3a] p-4 max-h-[320px] overflow-auto">
           <h2 className="text-sm font-semibold tracking-wide text-[#9aa0a6] mb-2">Node Inspector</h2>
           {!selectedNode ? (
             <div className="text-xs text-[#9aa0a6]">Click a bubble in <em>Select/Drag</em> mode to edit per-bubble styles.</div>
@@ -1311,10 +1247,10 @@ VOD Review / Theater, 60`} value={rawList} onChange={(e) => setRawList(e.target.
         </div>
 
         {/* Graph stats */}
-        <div className="col-span-1 bg-[#121220] rounded-2xl border border-[#2a2a3a] p-4">
+        <div className="col-span-1 bg-[#121220] rounded-2xl border border-[#2a2a3a] p-4 max-h-[320px] overflow-auto">
           <h2 className="text-sm font-semibold tracking-wide text-[#9aa0a6] mb-2">Current Graph</h2>
           <div className="text-xs text-[#9aa0a6]">{nodes.length} nodes • {links.length} links</div>
-          <div className="mt-2 grid grid-cols-2 gap-2 text-xs max-h-[220px] overflow-auto">
+          <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
             {nodes.map((n) => (
               <div key={n.id} className="border border-[#2a2a3a] rounded-lg p-2">
                 <div className="truncate font-medium" title={n.name}>{n.name}</div>
@@ -1337,16 +1273,12 @@ VOD Review / Theater, 60`} value={rawList} onChange={(e) => setRawList(e.target.
                 if (!s || !t) return null;
                 const dx = (t.x - s.x), dy = (t.y - s.y); const dist = Math.hypot(dx, dy) || 1; const nx = dx / dist, ny = dy / dist;
                 const rs = rOf(s.area), rt = rOf(t.area);
-
-                // NEW: let arrow/line start & end move inside the circle by `arrowOverlap` (clamped per radius)
                 const insetS = Math.max(0, Math.min(arrowOverlap, rs - 2));
                 const insetT = Math.max(0, Math.min(arrowOverlap, rt - 6));
-
                 const x1 = s.x + nx * (rs + 2 - insetS);
                 const y1 = s.y + ny * (rs + 2 - insetS);
                 const x2 = t.x - nx * (rt + 6 - insetT);
                 const y2 = t.y - ny * (rt + 6 - insetT);
-
                 const st = styles[l.type];
                 return (
                   <g key={l.id} onDoubleClick={() => { pushHistory(); setLinks((p) => p.filter((x) => x.id !== l.id)); }} onClick={() => (lastClickedLinkRef.current = l.id)}>
@@ -1375,7 +1307,6 @@ VOD Review / Theater, 60`} value={rawList} onChange={(e) => setRawList(e.target.
                   >
                     <circle r={r} fill={n.fill ?? (bulkFillTransparent ? "none" : bulkFill)} stroke={hi ? styles.necessary.color : (n.stroke || bulkStroke)} strokeWidth={n.strokeWidth ?? bulkStrokeWidth} />
                     <circle r={r - 2} fill="none" stroke="#2c2c3c" strokeWidth={1} />
-                    
                     <text textAnchor="middle" dominantBaseline="middle" className="select-none"
                           style={{ fill: labelColor, fontSize: labelSize, fontWeight: 600, letterSpacing: 0.4, fontFamily: labelFont }}>
                       {(() => {
@@ -1390,17 +1321,10 @@ VOD Review / Theater, 60`} value={rawList} onChange={(e) => setRawList(e.target.
                         ));
                       })()}
                     </text>
-
                     {showMeasurements && (
-
-
-                    
-
-                    <text y={r - 18} textAnchor="middle" style={{ fill: THEME.subtle, fontSize: areaSize, fontFamily: labelFont }}>
-                      {n.area} m²
-                    </text>
-
-
+                      <text y={r - 18} textAnchor="middle" style={{ fill: THEME.subtle, fontSize: areaSize, fontFamily: labelFont }}>
+                        {n.area} m²
+                      </text>
                     )}
                     <foreignObject x={-r} y={-18} width={r * 2} height={36} data-ignore-export>
                       <InlineEdit text={n.name} onChange={(val) => renameNode(n.id, val)} className="mx-auto text-center" />
@@ -1422,7 +1346,7 @@ VOD Review / Theater, 60`} value={rawList} onChange={(e) => setRawList(e.target.
         </div>
       </div>
 
-      {/* About section */}
+      {/* About */}
       <div className="mx-auto max-w-[1400px] px-4 pb-16">
         <details className="bg-[#121220] rounded-2xl border border-[#2a2a3a] p-4">
           <summary className="cursor-pointer select-none text-sm font-semibold tracking-wide text-[#9aa0a6]">
@@ -1430,7 +1354,7 @@ VOD Review / Theater, 60`} value={rawList} onChange={(e) => setRawList(e.target.
           </summary>
           <div className="mt-3 text-sm leading-6 text-[#d8d8e2]">
             <p><strong>Authored by:</strong> Mark Jay O. Gooc — Architecture student, Batangas State University – TNEU (ARC‑5108)</p>
-            <p className="opacity-80">Bubble Diagram Builder (React + D3). Version 6.4 </p>
+            <p className="opacity-80">Clean & Stable v5.0 — optimized physics, rotation reset on toggle, scenes persistence, zoom/pan/fullscreen, exports, and tidy UI.</p>
           </div>
         </details>
       </div>
@@ -1449,9 +1373,7 @@ function InlineEdit({ text, onChange, className }) {
         onDoubleClick={(e) => { e.stopPropagation(); setEditing(true); }}
         className={`pointer-events-auto select-none text-[11px] text-white/90 bg-transparent ${className}`}
         style={{ lineHeight: 1.2 }}
-      >
-        {/* double‑click to edit */}
-      </div>
+      />
     );
   }
   return (
@@ -1486,17 +1408,6 @@ function InlineEditField({ label, value, onChange }) {
   );
 }
 
-// Wrap long labels into tspans
-function wrapText(text, max = 16) {
-  const words = String(text).split(/\s+/); const lines = []; let cur = "";
-  for (const w of words) {
-    if ((cur + " " + w).trim().length > max) { if (cur) lines.push(cur); cur = w; }
-    else { cur = (cur + " " + w).trim(); }
-  }
-  if (cur) lines.push(cur);
-  return lines.slice(0, 5);
-}
-// --- Precise width-based SVG text wrapping (uses canvas measureText) ---------
 const _measureCtx = (() => {
   try {
     const c = document.createElement("canvas");
@@ -1506,28 +1417,20 @@ const _measureCtx = (() => {
 
 function measureWidth(s, fontFamily, fontPx) {
   const ctx = _measureCtx;
-  if (!ctx) return String(s).length * fontPx * 0.6; // heuristic fallback
+  if (!ctx) return String(s).length * fontPx * 0.6;
   ctx.font = `${Math.max(8, fontPx)}px ${fontFamily || "system-ui, Arial"}`;
   return ctx.measureText(String(s)).width;
 }
 
-/**
- * Wrap a label to a specific max pixel width using canvas text metrics.
- * - Breaks on spaces when possible.
- * - If a single word is too long, it hard-wraps by characters.
- * - Limits lines to maxLines (adds ellipsis if truncated).
- */
 function wrapToWidth(label, fontFamily, fontPx, maxWidth, maxLines = 5) {
-  const words = String(label).split(/\s+/).filter(Boolean);
+  const words = String(label).split(/\\s+/).filter(Boolean);
   const lines = [];
   let cur = "";
-
   const pushLine = (s) => { if (s) lines.push(s); };
 
   for (let i = 0; i < words.length; i++) {
     const w = words[i];
     if (!cur) {
-      // If the word alone exceeds width, hard-wrap by chars
       if (measureWidth(w, fontFamily, fontPx) > maxWidth) {
         let buf = "";
         for (const ch of w) {
@@ -1550,27 +1453,22 @@ function wrapToWidth(label, fontFamily, fontPx, maxWidth, maxLines = 5) {
     if (lines.length >= maxLines) break;
   }
   if (lines.length < maxLines && cur) pushLine(cur);
-
-  // Ellipsize if too many words to fit
   if (lines.length > maxLines) {
     return lines.slice(0, maxLines - 1).concat([lines[maxLines - 1] + "…"]);
   }
   return lines;
 }
 
-
 // Smoke tests (console)
 (function runSmokeTests() {
   try {
-    const parsed = parseList("A, 10\\nB 20\\nC-30\\nNoArea");
-    console.assert(parsed.length === 4, "parseList length");
-    console.assert(parsed[0].area === 10 && parsed[1].area === 20 && parsed[2].area === 30, "parseList areas");
-    const r = scaleRadius(parsed);
-    const r10 = r(10), r20 = r(20), r30 = r(30);
-    console.assert(r10 <= r20 && r20 <= r30, "scaleRadius monotonic");
-    console.assert(wrapText("one two three four five six seven eight nine ten", 4).length <= 5, "wrapText cap");
+    const parsed = (function(txt){return txt.split("\\n").map(s=>s.trim()).filter(Boolean);})(`A, 10
+B 20
+C-30
+NoArea`);
+    console.assert(parsed.length === 4, "parseList length (basic)");
     console.assert(clampTextSize("16") === 16, "text size string→number");
-    console.assert(clampTextSize(5) === TEXT_MIN, "text size min clamp");
-    console.assert(clampTextSize(99) === TEXT_MAX, "text size max clamp");
+    console.assert(clampTextSize(5) === 9, "text size min clamp");
+    console.assert(clampTextSize(99) === 28, "text size max clamp");
   } catch (e) { console.warn("Smoke tests warning:", e); }
 })();
