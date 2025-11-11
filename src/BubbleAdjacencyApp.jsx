@@ -1206,7 +1206,7 @@ export default function BubbleAdjacencyApp() {
                       <option value={FONT_STACKS.Poppins}>Poppins</option>
                       <option value={FONT_STACKS.Roboto}>Roboto</option>
                       <option value={FONT_STACKS.System}>system-ui</option>
-                      <option value={FONT_STACKS.HelveticaNowCondensed}>Helvetica Now Condensed (if available)</option>
+                      <option value={FONT_STACKS.HelveticaNowCondensed}>Helvetica Now Condensed</option>
                     </select>
                     <input type="color" value={bulkTextColor} onChange={(e)=>setBulkTextColor(e.target.value)}/>
                     <label className="flex items-center gap-1">size
