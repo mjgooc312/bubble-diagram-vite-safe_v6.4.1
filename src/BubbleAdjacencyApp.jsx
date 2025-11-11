@@ -3,13 +3,16 @@ import * as d3 from "d3";
 
 /**
  * Bubble Diagram Builder – Force-directed (React + D3)
- * v4.5.1 — Detangle pulse + Connect-mode click fix + Readability tweaks + Font dropdown overflow fix
+ * v4.6 — UI refresh (design-only), preserves all previous functionality
  *
- * • “De-tangle (explode→shrink)” button to separate connected bubbles.
- * • Connect mode: editors don’t block clicks; dragging disabled while connecting.
- * • High-contrast dropdowns (class .ui-select) for dark UI.
- * • Label halo stroke so text stays readable on any fill.
- * • NEW: .select-wrap wrapper prevents font dropdown from overflowing card margins.
+ * What changed (UI only):
+ * • Slim command bar + floating canvas dock (zoom/fit/fullscreen/physics/detangle/exports).
+ * • Controls grouped into neat collapsible cards (Spaces · Styles · Layout & Physics · Scenes · Files · Stats).
+ * • High-contrast selects, rounded color pills, subtle borders, tidy spacing, custom scrollbars.
+ * • No text glow; readability kept via good contrast.
+ *
+ * What did NOT change:
+ * • All features/behaviors, data model, sim/forces, arrow overlap, scenes, export/import, etc.
  */
 
 // ---- Theme (UI chrome only; not the canvas background) ----------------------
@@ -1052,9 +1055,13 @@ export default function BubbleAdjacencyApp() {
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
     >
-      {/* Global styles: color pills + high-contrast selects */}
+      {/* Global styles: controls, scrollbars, selects */}
       <style data-ignore-export>{`
         :root { color-scheme: dark; }
+        * { scrollbar-width: thin; scrollbar-color: #3a3a4a #121220; }
+        *::-webkit-scrollbar { height: 10px; width: 10px; }
+        *::-webkit-scrollbar-thumb { background: #3a3a4a; border-radius: 8px; }
+        *::-webkit-scrollbar-track { background: #121220; }
 
         input[type="color"] {
           -webkit-appearance: none;
@@ -1070,7 +1077,6 @@ export default function BubbleAdjacencyApp() {
         input[type="color"]::-webkit-color-swatch { border: none; border-radius: 9999px; }
         input[type="color"]::-moz-color-swatch { border: none; border-radius: 9999px; }
 
-        /* --- High-contrast form controls on dark UI --- */
         .ui-select{
           background:#0f0f18;
           color:#e6e6f0;
@@ -1080,396 +1086,432 @@ export default function BubbleAdjacencyApp() {
           font-size:13px;
           line-height:1.2;
           box-shadow:0 6px 18px rgba(0,0,0,.35);
-          width:180px;           /* keep control width stable */
-          max-width:100%;
-          text-overflow:ellipsis;
         }
         .ui-select:focus{ outline:2px solid #8b5cf6; outline-offset:2px; }
-        .ui-select option{ background:#0f0f18; color:#e6e6f0; white-space:nowrap; }
+        .ui-select option{ background:#0f0f18; color:#e6e6f0; }
         .ui-select option:checked,
         .ui-select option:hover{ background:#1b1b2a !important; color:#fff !important; }
-
-        /* NEW: wrapper that prevents dropdown from crossing card margins */
-        .select-wrap{
-          display:inline-block;
-          max-width:100%;
-          overflow:hidden;
-          border-radius:10px;
+        .card {
+          background:#121220; border:1px solid ${THEME.border};
+          border-radius:16px; padding:14px;
         }
+        .group-title {
+          font-size:12px; letter-spacing:.06em; color:${THEME.subtle}; font-weight:600;
+        }
+        .btn {
+          border:1px solid ${THEME.border}; border-radius:12px; padding:8px 12px; font-size:13px;
+          background:transparent; color:${THEME.text};
+        }
+        .btn:hover { background:rgba(255,255,255,.06); }
+        .btn-xs { padding:6px 10px; font-size:12px; border-radius:10px; }
+        .dock-btn { width:38px; height:38px; display:flex; align-items:center; justify-content:center; border-radius:10px; }
       `}</style>
 
-      {/* Toolbar */}
-      <div className="sticky top-0 z-10 backdrop-blur bg-black/30 border-b border-[#2a2a3a]">
-        <div className="mx-auto max-w-[1400px] px-4 py-3 flex flex-wrap items-center gap-3">
-          <div className="font-semibold tracking-wide text-sm text-[#9aa0a6]">Bubble Diagram Builder</div>
-
-          <div className="ml-auto flex flex-wrap items-center gap-2">
-            {/* Modes */}
-            <button className={`px-3 py-2 rounded-xl border ${mode === "select" ? "bg-white/10" : ""} border-[#2a2a3a] text-sm`} onClick={() => setMode("select")}>
-              Select / Drag
-            </button>
-            <button className={`px-3 py-2 rounded-xl border ${mode === "connect" ? "bg-white/10" : ""} border-[#2a2a3a] text-sm`} onClick={() => setMode("connect")}>
-              Connect
-            </button>
-
-            {/* Undo / Redo */}
-            <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={undo}>Undo</button>
-            <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={redo}>Redo</button>
-
-            {/* Line style controls */}
-            {["necessary", "ideal"].map((key) => (
-              <div key={key} className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
-                <span className="opacity-70 w-16 capitalize">{key}</span>
-                <input type="color" value={styles[key].color} title={`${key} color`} onChange={(e) => setStyles((s) => ({ ...s, [key]: { ...s[key], color: e.target.value } }))} />
-                <label className="flex items-center gap-1"><input type="checkbox" checked={styles[key].dashed} onChange={(e) => setStyles((s) => ({ ...s, [key]: { ...s[key], dashed: e.target.checked } }))} /> dashed</label>
-                <label className="flex items-center gap-1">w
-                  <input type="number" min={1} max={12} value={styles[key].width} className="w-14 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" onChange={(e) => setStyles((s) => ({ ...s, [key]: { ...s[key], width: Math.max(1, Math.min(12, +e.target.value || 1)) } }))} />
-                </label>
-                <select className="ui-select" value={styles[key].headStart} onChange={(e) => setStyles((s) => ({ ...s, [key]: { ...s[key], headStart: e.target.value } }))}>
-                  {HEAD_SHAPES.map((h) => (<option key={h} value={h}>{h}</option>))}
-                </select>
-                <span>→</span>
-                <select className="ui-select" value={styles[key].headEnd} onChange={(e) => setStyles((s) => ({ ...s, [key]: { ...s[key], headEnd: e.target.value } }))}>
-                  {HEAD_SHAPES.map((h) => (<option key={h} value={h}>{h}</option>))}
-                </select>
-                <button className={`ml-2 px-2 py-1 rounded-md border border-[#2a2a3a] ${currentLineType === key ? "bg-white/10" : ""}`} onClick={() => setCurrentLineType(key)}>Use</button>
-              </div>
-            ))}
-
-            {/* Bubble (node) bulk styles */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
-              <span className="opacity-70">Bubbles:</span>
-              <label className="flex items-center gap-1">Fill
-                <input type="color" value={bulkFill} onChange={(e) => setBulkFill(e.target.value)} disabled={bulkFillTransparent} />
-              </label>
-              <label className="flex items-center gap-1"><input type="checkbox" checked={bulkFillTransparent} onChange={(e) => setBulkFillTransparent(e.target.checked)} /> transparent</label>
-              <label className="flex items-center gap-1">Border
-                <input type="color" value={bulkStroke} onChange={(e) => setBulkStroke(e.target.value)} />
-              </label>
-              <label className="flex items-center gap-1">w
-                <input type="number" min={1} max={12} value={bulkStrokeWidth} className="w-14 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" onChange={(e) => setBulkStrokeWidth(Math.max(1, Math.min(12, +e.target.value || 1)))} />
-              </label>
-              <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" onClick={applyBulkBubbleStyles}>Apply to all</button>
-            </div>
-
-            {/* Text (label) bulk styles */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
-              <span className="opacity-70">Labels:</span>
-              <div className="select-wrap">
-                <select className="ui-select" value={bulkTextFont} onChange={(e) => setBulkTextFont(e.target.value)}>
-                  <option value={FONT_STACKS.Outfit}>Outfit</option>
-                  <option value={FONT_STACKS.Inter}>Inter</option>
-                  <option value={FONT_STACKS.Poppins}>Poppins</option>
-                  <option value={FONT_STACKS.Roboto}>Roboto</option>
-                  <option value={FONT_STACKS.System}>system-ui</option>
-                  <option value={FONT_STACKS.HelveticaNowCondensed}>Helvetica Now Condensed</option>
-                </select>
-              </div>
-              <input type="color" value={bulkTextColor} onChange={(e) => setBulkTextColor(e.target.value)} />
-              <label className="flex items-center gap-1">size
-                <input type="number" min={TEXT_MIN} max={TEXT_MAX} value={bulkTextSize} className="w-14 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" onChange={(e) => setBulkTextSize(clampTextSize(e.target.value))} />
-              </label>
-              <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" onClick={applyBulkTextStyles}>Apply to all</button>
-            </div>
-
-            {/* Export background */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
-              <span className="opacity-70">Export BG:</span>
-              <label className="flex items-center gap-1"><input type="radio" name="bg-exp" checked={exportBgMode === "transparent"} onChange={() => setExportBgMode("transparent")} /> transparent</label>
-              <label className="flex items-center gap-1"><input type="radio" name="bg-exp" checked={exportBgMode === "white"} onChange={() => setExportBgMode("white")} /> white</label>
-              <label className="flex items-center gap-1"><input type="radio" name="bg-exp" checked={exportBgMode === "custom"} onChange={() => setExportBgMode("custom")} /> custom</label>
-              <input type="color" value={exportBgCustom} onChange={(e) => setExportBgCustom(e.target.value)} disabled={exportBgMode !== "custom"} />
-            </div>
-
-            {/* Live background */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
-              <span className="opacity-70">Live BG:</span>
-              <label className="flex items-center gap-1"><input type="radio" name="bg-live" checked={liveBgMode === "transparent"} onChange={() => setLiveBgMode("transparent")} /> transparent</label>
-              <label className="flex items-center gap-1"><input type="radio" name="bg-live" checked={liveBgMode === "white"} onChange={() => setLiveBgMode("white")} /> white</label>
-              <label className="flex items-center gap-1"><input type="radio" name="bg-live" checked={liveBgMode === "custom"} onChange={() => setLiveBgMode("custom")} /> custom</label>
-              <input type="color" value={liveBgCustom} onChange={(e) => setLiveBgCustom(e.target.value)} disabled={liveBgMode !== "custom"} />
-            </div>
-
-            {/* Buffer */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
-              <span className="opacity-70">Buffer:</span>
-              <input type="range" min={0} max={80} step={1} value={buffer} onChange={(e) => setBuffer(+e.target.value)} />
-              <input type="number" min={0} max={80} value={buffer} className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" onChange={(e) => setBuffer(Math.max(0, Math.min(80, +e.target.value || 0)))} />
-              <span className="opacity-70">px</span>
-            </div>
-
-            {/* Arrow Overlap */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
-              <span className="opacity-70">Arrow overlap:</span>
-              <input type="range" min={0} max={60} step={1} value={arrowOverlap} onChange={(e) => setArrowOverlap(+e.target.value)} />
-              <input type="number" min={0} max={200} value={arrowOverlap} className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" onChange={(e) => setArrowOverlap(Math.max(0, Math.min(200, +e.target.value || 0)))} />
-              <span className="opacity-70">px</span>
-            </div>
-
-            {/* Rotation Sensitivity */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
-              <span className="opacity-70">Rotation sensitivity:</span>
-              <input type="range" min={0} max={100} step={1} value={rotationSensitivity} onChange={(e) => setRotationSensitivity(+e.target.value)} />
-              <input type="number" min={0} max={100} value={rotationSensitivity} className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" onChange={(e) => setRotationSensitivity(Math.max(0, Math.min(100, +e.target.value || 0)))} />
-              <span className="opacity-70">%</span>
-            </div>
-
-            {/* Measurements toggle */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
-              <label className="flex items-center gap-1">
-                <input type="checkbox" checked={showMeasurements} onChange={(e) => setShowMeasurements(e.target.checked)} />
-                show m² labels
-              </label>
-            </div>
-
-            {/* Graph actions */}
-            <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={() => setPhysics((p) => !p)}>{physics ? "Physics: ON" : "Physics: OFF"}</button>
-            <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={() => setNodes([...nodes])}>Re-Layout</button>
-
-            {/* De-tangle pulse */}
-            <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={detanglePulse}>
-              De-tangle (explode→shrink)
-            </button>
-
-            {/* Scenes */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-2 py-2 text-xs">
-              <span className="opacity-70">Scene:</span>
-              <select className="ui-select"
-                      value={activeSceneId || ""}
-                      onChange={(e) => setActiveSceneId(e.target.value || null)}>
-                <option value="">(none)</option>
-                {scenes.map((s) => (<option key={s.id} value={s.id}>{s.name}</option>))}
-              </select>
-              <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" onClick={() => {
-                const nm = window.prompt("New scene name", `Scene ${scenes.length + 1}`);
-                if (nm != null) addScene(nm);
-              }}>Add</button>
-              <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" disabled={!activeSceneId} onClick={() => activeSceneId && applyScene(activeSceneId)}>Go</button>
-              <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" disabled={!activeSceneId} onClick={() => activeSceneId && updateScene(activeSceneId)}>Update</button>
-              <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" disabled={!activeSceneId} onClick={() => activeSceneId && deleteScene(activeSceneId)}>Delete</button>
-            </div>
-
-            {/* Zoom controls */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-2 py-2 text-xs">
-              <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" onClick={zoomOut}>−</button>
-              <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" onClick={resetZoom}>Reset</button>
-              <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" onClick={fitToView}>Fit</button>
-              <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" onClick={zoomIn}>+</button>
-            </div>
-
-            {/* Fullscreen & Export */}
-            <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={toggleFullscreen}>{isFullscreen ? "Exit Fullscreen" : "Fullscreen"}</button>
-            <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={exportSVG}>Export SVG</button>
-            <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={exportPNG}>Export PNG</button>
-            <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" title="Ctrl/⌘ + S" onClick={saveJSON}>Save JSON</button>
-            <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={saveJSONAs}>Save As…</button>
-            <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={openJSON}>Open JSON…</button>
-            <label className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm cursor-pointer">Import JSON (fallback)
-              <input className="hidden" type="file" accept="application/json" onChange={(e) => e.target.files && importJSON(e.target.files[0])} />
-            </label>
+      {/* Command bar */}
+      <div className="sticky top-0 z-20 backdrop-blur bg-black/35 border-b border-[#2a2a3a]">
+        <div className="mx-auto max-w-[1500px] px-4 py-3 flex items-center gap-3">
+          <div className="text-sm font-semibold tracking-wide text-[#d6d6e2]">Bubble Diagram Builder</div>
+          <div className="text-xs text-[#9aa0a6]">Design mode:</div>
+          <div className="flex items-center gap-1">
+            <button className={`btn btn-xs ${mode==="select"?"bg-white/10":""}`} onClick={()=>setMode("select")}>Select/Drag</button>
+            <button className={`btn btn-xs ${mode==="connect"?"bg-white/10":""}`} onClick={()=>setMode("connect")}>Connect</button>
+          </div>
+          <div className="ml-auto flex items-center gap-2">
+            <button className="btn btn-xs" onClick={undo}>Undo</button>
+            <button className="btn btn-xs" onClick={redo}>Redo</button>
+            <button className="btn btn-xs" onClick={clearAll}>Clear</button>
           </div>
         </div>
       </div>
 
-      {/* Panels */}
-      <div className="mx-auto max-w-[1400px] px-4 mt-4 grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Input list */}
-        <div className="col-span-1 bg-[#121220] rounded-2xl border border-[#2a2a3a] p-4">
-          <div className="flex items-center justify-between gap-2 mb-2">
-            <h2 className="text-sm font-semibold tracking-wide text-[#9aa0a6]">List of Spaces (name, area m²)</h2>
-            <div className="flex gap-2">
-              <button className="px-3 py-1.5 rounded-xl border border-[#2a2a3a] text-xs" onClick={() => setRawList(SAMPLE_TEXT)}>Load Sample</button>
-              <button className="px-3 py-1.5 rounded-xl border border-[#2a2a3a] text-xs" onClick={onGenerate}>Generate Bubbles</button>
-              <button className="px-3 py-1.5 rounded-xl border border-[#2a2a3a] text-xs" onClick={updateFromList}>Update from list</button>
-              <label className="flex items-center gap-1 text-xs text-[#9aa0a6]"><input type="checkbox" checked={updateMatchMode==="name"} onChange={(e)=>setUpdateMatchMode(e.target.checked ? "name" : "index")} /> match by name (safer)</label>
-              <label className="flex items-center gap-1 text-xs text-[#9aa0a6]">
-                <input type="checkbox" checked={updateAreasFromList} onChange={(e)=>setUpdateAreasFromList(e.target.checked)} />
-                also update areas
-              </label>
+      {/* Main layout */}
+      <div className="mx-auto max-w-[1500px] px-4 py-4 grid grid-cols-1 xl:grid-cols-12 gap-4">
+        {/* Controls column */}
+        <div className="xl:col-span-4 space-y-4">
+          {/* Spaces */}
+          <details open className="card">
+            <summary className="cursor-pointer select-none group-title">Spaces (name, area m²)</summary>
+            <div className="mt-3 space-y-2">
+              <div className="flex flex-wrap gap-2">
+                <button className="btn btn-xs" onClick={()=>setRawList(SAMPLE_TEXT)}>Load sample</button>
+                <button className="btn btn-xs" onClick={onGenerate}>Generate bubbles</button>
+                <button className="btn btn-xs" onClick={updateFromList}>Update from list</button>
+                <label className="text-xs text-[#9aa0a6] flex items-center gap-1">
+                  <input type="checkbox" checked={updateMatchMode==="name"} onChange={(e)=>setUpdateMatchMode(e.target.checked?"name":"index")} /> match by name
+                </label>
+                <label className="text-xs text-[#9aa0a6] flex items-center gap-1">
+                  <input type="checkbox" checked={updateAreasFromList} onChange={(e)=>setUpdateAreasFromList(e.target.checked)} /> also update areas
+                </label>
+              </div>
+              <textarea
+                className="w-full min-h-[160px] text-sm bg-transparent border rounded-xl border-[#2a2a3a] p-3 outline-none"
+                placeholder={`Example (one per line):\nMatch Admin Room, 90\nVOD Review / Theater, 60`}
+                value={rawList}
+                onChange={(e)=>setRawList(e.target.value)}
+              />
+              <p className="text-xs text-[#9aa0a6]">Formats: <code>name, area</code> • <code>name - area</code> • <code>name area</code></p>
             </div>
-          </div>
-          <textarea className="w-full min-h-[180px] text-sm bg-transparent border rounded-xl border-[#2a2a3a] p-3 outline-none" placeholder={`Example (one per line):
-Match Admin Room, 90
-VOD Review / Theater, 60`} value={rawList} onChange={(e) => setRawList(e.target.value)} />
-          <p className="mt-2 text-xs text-[#9aa0a6]">Formats: <code>name, area</code> • <code>name - area</code> • <code>name area</code></p>
-        </div>
+          </details>
 
-        {/* Node Inspector (per-bubble styling) */}
-        <div className="col-span-1 bg-[#121220] rounded-2xl border border-[#2a2a3a] p-4">
-          <h2 className="text-sm font-semibold tracking-wide text-[#9aa0a6] mb-2">Node Inspector</h2>
-          {!selectedNode ? (
-            <div className="text-xs text-[#9aa0a6]">Click a bubble in <em>Select/Drag</em> mode to edit per-bubble styles.</div>
-          ) : (
-            <div className="space-y-3 text-sm">
-              <div className="font-medium truncate" title={selectedNode.name}>{selectedNode.name}</div>
-              <div className="grid grid-cols-2 gap-2">
-                <InlineEditField label="Name" value={selectedNode.name} onChange={(v) => renameNode(selectedNode.id, v)} />
-                <InlineEditField label="Area (m²)" value={String(selectedNode.area)} onChange={(v) => changeArea(selectedNode.id, v)} />
-              </div>
-              <div className="flex items-center gap-3 flex-wrap">
-                <label className="flex items-center gap-2">Fill
-                  <input type="color" value={selectedNode.fill === "none" ? "#000000" : selectedNode.fill} onChange={(e) => setNodeFill(selectedNode.id, e.target.value)} disabled={selectedNode.fill === "none"} />
-                </label>
-                <label className="flex items-center gap-2"><input type="checkbox" checked={selectedNode.fill === "none"} onChange={(e) => setNodeFill(selectedNode.id, e.target.checked ? "none" : bulkFill)} /> transparent</label>
-                <label className="flex items-center gap-2">Border
-                  <input type="color" value={selectedNode.stroke || bulkStroke} onChange={(e) => setNodeStroke(selectedNode.id, e.target.value)} />
-                </label>
-                <label className="flex items-center gap-1">w
-                  <input type="number" min={1} max={12} value={selectedNode.strokeWidth ?? bulkStrokeWidth} className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" onChange={(e) => setNodeStrokeW(selectedNode.id, e.target.value)} />
-                </label>
-              </div>
-              <div className="flex items-center gap-3 flex-wrap">
-                <div className="select-wrap">
-                  <select className="ui-select" value={selectedNode.textFont || bulkTextFont} onChange={(e) => setNodeTextFont(selectedNode.id, e.target.value)}>
-                    <option value={FONT_STACKS.Outfit}>Outfit</option>
-                    <option value={FONT_STACKS.Inter}>Inter</option>
-                    <option value={FONT_STACKS.Poppins}>Poppins</option>
-                    <option value={FONT_STACKS.Roboto}>Roboto</option>
-                    <option value={FONT_STACKS.System}>system-ui</option>
-                    <option value={FONT_STACKS.HelveticaNowCondensed}>Helvetica Now Condensed</option>
-                  </select>
+          {/* Styles */}
+          <details open className="card">
+            <summary className="cursor-pointer select-none group-title">Styles</summary>
+            <div className="mt-3 space-y-3">
+              {/* Line styles */}
+              {["necessary","ideal"].map((key)=>(
+                <div key={key} className="border border-[#2a2a3a] rounded-xl p-2">
+                  <div className="text-xs opacity-80 mb-2 flex items-center gap-2">
+                    <span className="capitalize">{key}</span>
+                    <button className={`btn btn-xs ${currentLineType===key?"bg-white/10":""}`} onClick={()=>setCurrentLineType(key)}>Use</button>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <label className="flex items-center gap-1">Color <input type="color" value={styles[key].color} onChange={(e)=>setStyles(s=>({...s,[key]:{...s[key],color:e.target.value}}))} /></label>
+                    <label className="flex items-center gap-1"><input type="checkbox" checked={styles[key].dashed} onChange={(e)=>setStyles(s=>({...s,[key]:{...s[key],dashed:e.target.checked}}))}/> dashed</label>
+                    <label className="flex items-center gap-1">w
+                      <input type="number" min={1} max={12} value={styles[key].width} className="w-14 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
+                        onChange={(e)=>setStyles(s=>({...s,[key]:{...s[key],width:Math.max(1,Math.min(12,+e.target.value||1))}}))}/>
+                    </label>
+                    <select className="ui-select" value={styles[key].headStart} onChange={(e)=>setStyles(s=>({...s,[key]:{...s[key],headStart:e.target.value}}))}>
+                      {HEAD_SHAPES.map(h=><option key={h} value={h}>{h}</option>)}
+                    </select>
+                    <span className="opacity-60">→</span>
+                    <select className="ui-select" value={styles[key].headEnd} onChange={(e)=>setStyles(s=>({...s,[key]:{...s[key],headEnd:e.target.value}}))}>
+                      {HEAD_SHAPES.map(h=><option key={h} value={h}>{h}</option>)}
+                    </select>
+                  </div>
                 </div>
-                <input type="color" value={selectedNode.textColor || bulkTextColor} onChange={(e) => setNodeTextColor(selectedNode.id, e.target.value)} />
-                <label className="flex items-center gap-1">size
-                  <input type="number" min={TEXT_MIN} max={TEXT_MAX} value={clampTextSize(selectedNode.textSize ?? bulkTextSize)} className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" onChange={(e) => setNodeTextSize(selectedNode.id, e.target.value)} />
-                </label>
+              ))}
+
+              {/* Bubbles & Labels */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="border border-[#2a2a3a] rounded-xl p-2">
+                  <div className="text-xs opacity-80 mb-2">Bubbles (bulk)</div>
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <label className="flex items-center gap-1">Fill <input type="color" value={bulkFill} onChange={(e)=>setBulkFill(e.target.value)} disabled={bulkFillTransparent}/></label>
+                    <label className="flex items-center gap-1"><input type="checkbox" checked={bulkFillTransparent} onChange={(e)=>setBulkFillTransparent(e.target.checked)}/> transparent</label>
+                    <label className="flex items-center gap-1">Border <input type="color" value={bulkStroke} onChange={(e)=>setBulkStroke(e.target.value)}/></label>
+                    <label className="flex items-center gap-1">w
+                      <input type="number" min={1} max={12} value={bulkStrokeWidth} className="w-14 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
+                        onChange={(e)=>setBulkStrokeWidth(Math.max(1,Math.min(12,+e.target.value||1)))}/>
+                    </label>
+                    <button className="btn btn-xs" onClick={applyBulkBubbleStyles}>Apply to all</button>
+                  </div>
+                </div>
+                <div className="border border-[#2a2a3a] rounded-xl p-2">
+                  <div className="text-xs opacity-80 mb-2">Labels (bulk)</div>
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <select className="ui-select" value={bulkTextFont} onChange={(e)=>setBulkTextFont(e.target.value)}>
+                      <option value={FONT_STACKS.Outfit}>Outfit</option>
+                      <option value={FONT_STACKS.Inter}>Inter</option>
+                      <option value={FONT_STACKS.Poppins}>Poppins</option>
+                      <option value={FONT_STACKS.Roboto}>Roboto</option>
+                      <option value={FONT_STACKS.System}>system-ui</option>
+                      <option value={FONT_STACKS.HelveticaNowCondensed}>Helvetica Now Condensed (if available)</option>
+                    </select>
+                    <input type="color" value={bulkTextColor} onChange={(e)=>setBulkTextColor(e.target.value)}/>
+                    <label className="flex items-center gap-1">size
+                      <input type="number" min={TEXT_MIN} max={TEXT_MAX} value={bulkTextSize} className="w-14 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
+                        onChange={(e)=>setBulkTextSize(clampTextSize(e.target.value))}/>
+                    </label>
+                    <button className="btn btn-xs" onClick={applyBulkTextStyles}>Apply to all</button>
+                  </div>
+                </div>
               </div>
-              <div className="flex gap-2">
-                <button className="px-2 py-1 rounded-md border border-[#2a2a3a] text-xs" onClick={() => setSelectedNodeId(null)}>Done</button>
-                <button className="px-2 py-1 rounded-md border border-[#2a2a3a] text-xs" onClick={() => { setNodeFill(selectedNode.id, bulkFillTransparent ? "none" : bulkFill); setNodeStroke(selectedNode.id, bulkStroke); setNodeStrokeW(selectedNode.id, bulkStrokeWidth); setNodeTextFont(selectedNode.id, bulkTextFont); setNodeTextColor(selectedNode.id, bulkTextColor); setNodeTextSize(selectedNode.id, bulkTextSize); }}>Apply bulk defaults to this</button>
+
+              {/* Backgrounds */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="border border-[#2a2a3a] rounded-xl p-2">
+                  <div className="text-xs opacity-80 mb-2">Export background</div>
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <label className="flex items-center gap-1"><input type="radio" name="bg-exp" checked={exportBgMode==="transparent"} onChange={()=>setExportBgMode("transparent")}/> transparent</label>
+                    <label className="flex items-center gap-1"><input type="radio" name="bg-exp" checked={exportBgMode==="white"} onChange={()=>setExportBgMode("white")}/> white</label>
+                    <label className="flex items-center gap-1"><input type="radio" name="bg-exp" checked={exportBgMode==="custom"} onChange={()=>setExportBgMode("custom")}/> custom</label>
+                    <input type="color" value={exportBgCustom} onChange={(e)=>setExportBgCustom(e.target.value)} disabled={exportBgMode!=="custom"}/>
+                  </div>
+                </div>
+                <div className="border border-[#2a2a3a] rounded-xl p-2">
+                  <div className="text-xs opacity-80 mb-2">Live background</div>
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <label className="flex items-center gap-1"><input type="radio" name="bg-live" checked={liveBgMode==="transparent"} onChange={()=>setLiveBgMode("transparent")}/> transparent</label>
+                    <label className="flex items-center gap-1"><input type="radio" name="bg-live" checked={liveBgMode==="white"} onChange={()=>setLiveBgMode("white")}/> white</label>
+                    <label className="flex items-center gap-1"><input type="radio" name="bg-live" checked={liveBgMode==="custom"} onChange={()=>setLiveBgMode("custom")}/> custom</label>
+                    <input type="color" value={liveBgCustom} onChange={(e)=>setLiveBgCustom(e.target.value)} disabled={liveBgMode!=="custom"}/>
+                  </div>
+                </div>
               </div>
             </div>
-          )}
-        </div>
+          </details>
 
-        {/* Graph stats */}
-        <div className="col-span-1 bg-[#121220] rounded-2xl border border-[#2a2a3a] p-4">
-          <h2 className="text-sm font-semibold tracking-wide text-[#9aa0a6] mb-2">Current Graph</h2>
-          <div className="text-xs text-[#9aa0a6]">{nodes.length} nodes • {links.length} links</div>
-          <div className="mt-2 grid grid-cols-2 gap-2 text-xs max-h-[220px] overflow-auto">
-            {nodes.map((n) => (
-              <div key={n.id} className="border border-[#2a2a3a] rounded-lg p-2">
-                <div className="truncate font-medium" title={n.name}>{n.name}</div>
-                <div className="opacity-70">{n.area} m²</div>
+          {/* Layout & Physics */}
+          <details className="card" open>
+            <summary className="cursor-pointer select-none group-title">Layout & Physics</summary>
+            <div className="mt-3 grid grid-cols-1 gap-3">
+              <div className="flex items-center gap-2 text-xs">
+                <span className="opacity-70">Buffer</span>
+                <input type="range" min={0} max={80} step={1} value={buffer} onChange={(e)=>setBuffer(+e.target.value)}/>
+                <input type="number" min={0} max={80} value={buffer} className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
+                  onChange={(e)=>setBuffer(Math.max(0,Math.min(80,+e.target.value||0)))}/>
+                <span className="opacity-70">px</span>
               </div>
-            ))}
-          </div>
+              <div className="flex items-center gap-2 text-xs">
+                <span className="opacity-70">Arrow overlap</span>
+                <input type="range" min={0} max={60} step={1} value={arrowOverlap} onChange={(e)=>setArrowOverlap(+e.target.value)}/>
+                <input type="number" min={0} max={200} value={arrowOverlap} className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
+                  onChange={(e)=>setArrowOverlap(Math.max(0,Math.min(200,+e.target.value||0)))}/>
+                <span className="opacity-70">px</span>
+              </div>
+              <div className="flex items-center gap-2 text-xs">
+                <span className="opacity-70">Rotation sensitivity</span>
+                <input type="range" min={0} max={100} step={1} value={rotationSensitivity} onChange={(e)=>setRotationSensitivity(+e.target.value)}/>
+                <input type="number" min={0} max={100} value={rotationSensitivity} className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
+                  onChange={(e)=>setRotationSensitivity(Math.max(0,Math.min(100,+e.target.value||0)))}/>
+                <span className="opacity-70">%</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <label className="text-xs flex items-center gap-2">
+                  <input type="checkbox" checked={showMeasurements} onChange={(e)=>setShowMeasurements(e.target.checked)}/>
+                  show m² labels
+                </label>
+                <div className="flex items-center gap-2">
+                  <button className="btn btn-xs" onClick={()=>setPhysics(p=>!p)}>{physics?"Physics: ON":"Physics: OFF"}</button>
+                  <button className="btn btn-xs" onClick={()=>setNodes([...nodes])}>Re-layout</button>
+                  <button className="btn btn-xs" onClick={detanglePulse}>De-tangle</button>
+                </div>
+              </div>
+            </div>
+          </details>
+
+          {/* Scenes */}
+          <details className="card">
+            <summary className="cursor-pointer select-none group-title">Scenes</summary>
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+              <select className="ui-select" value={activeSceneId||""} onChange={(e)=>setActiveSceneId(e.target.value||null)}>
+                <option value="">(none)</option>
+                {scenes.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+              <button className="btn btn-xs" onClick={()=>{
+                const nm = window.prompt("New scene name", `Scene ${scenes.length+1}`);
+                if(nm!=null) addScene(nm);
+              }}>Add</button>
+              <button className="btn btn-xs" disabled={!activeSceneId} onClick={()=>activeSceneId&&applyScene(activeSceneId)}>Go</button>
+              <button className="btn btn-xs" disabled={!activeSceneId} onClick={()=>activeSceneId&&updateScene(activeSceneId)}>Update</button>
+              <button className="btn btn-xs" disabled={!activeSceneId} onClick={()=>activeSceneId&&deleteScene(activeSceneId)}>Delete</button>
+            </div>
+          </details>
+
+          {/* Files & Export */}
+          <details className="card">
+            <summary className="cursor-pointer select-none group-title">Files & Export</summary>
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+              <button className="btn btn-xs" onClick={exportSVG}>Export SVG</button>
+              <button className="btn btn-xs" onClick={exportPNG}>Export PNG</button>
+              <button className="btn btn-xs" title="Ctrl/⌘ + S" onClick={saveJSON}>Save JSON</button>
+              <button className="btn btn-xs" onClick={saveJSONAs}>Save As…</button>
+              <button className="btn btn-xs" onClick={openJSON}>Open JSON…</button>
+              <label className="btn btn-xs cursor-pointer">Import JSON
+                <input className="hidden" type="file" accept="application/json" onChange={(e)=>e.target.files&&importJSON(e.target.files[0])}/>
+              </label>
+            </div>
+          </details>
+
+          {/* Node inspector & Stats */}
+          <details className="card" open>
+            <summary className="cursor-pointer select-none group-title">Inspector & Stats</summary>
+            <div className="mt-3 space-y-3">
+              <div className="text-xs text-[#9aa0a6]">{nodes.length} nodes • {links.length} links</div>
+              <div className="border border-[#2a2a3a] rounded-xl p-3">
+                <div className="text-xs opacity-80 mb-2">Node Inspector</div>
+                {!selectedNode ? (
+                  <div className="text-xs text-[#9aa0a6]">Click a bubble in <em>Select/Drag</em> mode to edit styles.</div>
+                ) : (
+                  <div className="space-y-3 text-sm">
+                    <div className="font-medium truncate" title={selectedNode.name}>{selectedNode.name}</div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <InlineEditField label="Name" value={selectedNode.name} onChange={(v)=>renameNode(selectedNode.id,v)} />
+                      <InlineEditField label="Area (m²)" value={String(selectedNode.area)} onChange={(v)=>changeArea(selectedNode.id,v)} />
+                    </div>
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <label className="flex items-center gap-2">Fill
+                        <input type="color" value={selectedNode.fill==="none"?"#000000":selectedNode.fill} onChange={(e)=>setNodeFill(selectedNode.id,e.target.value)} disabled={selectedNode.fill==="none"} />
+                      </label>
+                      <label className="flex items-center gap-2"><input type="checkbox" checked={selectedNode.fill==="none"} onChange={(e)=>setNodeFill(selectedNode.id,e.target.checked?"none":bulkFill)} /> transparent</label>
+                      <label className="flex items-center gap-2">Border
+                        <input type="color" value={selectedNode.stroke || bulkStroke} onChange={(e)=>setNodeStroke(selectedNode.id,e.target.value)} />
+                      </label>
+                      <label className="flex items-center gap-1">w
+                        <input type="number" min={1} max={12} value={selectedNode.strokeWidth ?? bulkStrokeWidth} className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" onChange={(e)=>setNodeStrokeW(selectedNode.id,e.target.value)} />
+                      </label>
+                    </div>
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <select className="ui-select" value={selectedNode.textFont || bulkTextFont} onChange={(e)=>setNodeTextFont(selectedNode.id,e.target.value)}>
+                        <option value={FONT_STACKS.Outfit}>Outfit</option>
+                        <option value={FONT_STACKS.Inter}>Inter</option>
+                        <option value={FONT_STACKS.Poppins}>Poppins</option>
+                        <option value={FONT_STACKS.Roboto}>Roboto</option>
+                        <option value={FONT_STACKS.System}>system-ui</option>
+                        <option value={FONT_STACKS.HelveticaNowCondensed}>Helvetica Now Condensed (if available)</option>
+                      </select>
+                      <input type="color" value={selectedNode.textColor || bulkTextColor} onChange={(e)=>setNodeTextColor(selectedNode.id,e.target.value)} />
+                      <label className="flex items-center gap-1">size
+                        <input type="number" min={TEXT_MIN} max={TEXT_MAX} value={clampTextSize(selectedNode.textSize ?? bulkTextSize)} className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" onChange={(e)=>setNodeTextSize(selectedNode.id,e.target.value)} />
+                      </label>
+                    </div>
+                    <div className="flex gap-2">
+                      <button className="btn btn-xs" onClick={()=>setSelectedNodeId(null)}>Done</button>
+                      <button className="btn btn-xs" onClick={()=>{
+                        setNodeFill(selectedNode.id, bulkFillTransparent ? "none" : bulkFill);
+                        setNodeStroke(selectedNode.id, bulkStroke);
+                        setNodeStrokeW(selectedNode.id, bulkStrokeWidth);
+                        setNodeTextFont(selectedNode.id, bulkTextFont);
+                        setNodeTextColor(selectedNode.id, bulkTextColor);
+                        setNodeTextSize(selectedNode.id, bulkTextSize);
+                      }}>Apply bulk defaults</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 text-xs max-h-[220px] overflow-auto">
+                {nodes.map((n)=>(
+                  <div key={n.id} className="border border-[#2a2a3a] rounded-lg p-2">
+                    <div className="truncate font-medium" title={n.name}>{n.name}</div>
+                    <div className="opacity-70">{n.area} m²</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </details>
         </div>
-      </div>
 
-      {/* Canvas */}
-      <div className="mx-auto max-w-[1400px] px-4 my-4">
-        <div ref={containerRef} className="relative rounded-2xl border border-[#2a2a3a] overflow-hidden" style={{ background: liveBg }}>
-          <svg ref={svgRef} width={"100%"} height={700} viewBox={`-600 -350 1200 700`} className="block">
-            <MarkerDefs styles={styles} />
-            <g id="zoomable" transform={zoomTransform.toString()}>
-              {/* Links */}
-              {links.map((l) => {
-                const s = nodes.find((n) => n.id === l.source); const t = nodes.find((n) => n.id === l.target);
-                if (!s || !t) return null;
-                const dx = (t.x - s.x), dy = (t.y - s.y); const dist = Math.hypot(dx, dy) || 1; const nx = dx / dist, ny = dy / dist;
-                const rs = rOf(s.area), rt = rOf(t.area);
+        {/* Canvas column */}
+        <div className="xl:col-span-8">
+          <div ref={containerRef} className="relative rounded-2xl border border-[#2a2a3a] overflow-hidden" style={{ background: liveBg }}>
+            <svg ref={svgRef} width={"100%"} height={700} viewBox={`-600 -350 1200 700`} className="block">
+              <MarkerDefs styles={styles} />
+              <g id="zoomable" transform={zoomTransform.toString()}>
+                {/* Links */}
+                {links.map((l) => {
+                  const s = nodes.find((n) => n.id === l.source); const t = nodes.find((n) => n.id === l.target);
+                  if (!s || !t) return null;
+                  const dx = (t.x - s.x), dy = (t.y - s.y); const dist = Math.hypot(dx, dy) || 1; const nx = dx / dist, ny = dy / dist;
+                  const rs = rOf(s.area), rt = rOf(t.area);
 
-                // let arrow/line start & end move inside the circle by `arrowOverlap` (clamped per radius)
-                const insetS = Math.max(0, Math.min(arrowOverlap, rs - 2));
-                const insetT = Math.max(0, Math.min(arrowOverlap, rt - 6));
+                  // let arrow/line start & end move inside the circle by `arrowOverlap` (clamped per radius)
+                  const insetS = Math.max(0, Math.min(arrowOverlap, rs - 2));
+                  const insetT = Math.max(0, Math.min(arrowOverlap, rt - 6));
 
-                const x1 = s.x + nx * (rs + 2 - insetS);
-                const y1 = s.y + ny * (rs + 2 - insetS);
-                const x2 = t.x - nx * (rt + 6 - insetT);
-                const y2 = t.y - ny * (rt + 6 - insetT);
+                  const x1 = s.x + nx * (rs + 2 - insetS);
+                  const y1 = s.y + ny * (rs + 2 - insetS);
+                  const x2 = t.x - nx * (rt + 6 - insetT);
+                  const y2 = t.y - ny * (rt + 6 - insetT);
 
-                const st = styles[l.type];
-                return (
-                  <g key={l.id} onDoubleClick={() => { pushHistory(); setLinks((p) => p.filter((x) => x.id !== l.id)); }} onClick={() => (lastClickedLinkRef.current = l.id)}>
-                    <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={st.color} strokeWidth={st.width} strokeDasharray={dashFor(l.type)} markerStart={markerUrl(l.type, "start")} markerEnd={markerUrl(l.type, "end")} opacity={0.98} />
-                  </g>
-                );
-              })}
-              {/* Nodes */}
-              {nodes.map((n) => {
-                const r = rOf(n.area);
-                const isSrc = linkSource === n.id && mode === "connect";
-                const hi = hoverId === n.id || isSrc;
-                const labelFont = n.textFont || bulkTextFont;
-                const labelColor = n.textColor || bulkTextColor;
-                const labelSize = clampTextSize(n.textSize ?? bulkTextSize);
-                const areaSize = Math.max(TEXT_MIN, labelSize - 1);
-                return (
-                  <g
-                    key={n.id}
-                    transform={`translate(${n.x || 0},${n.y || 0})`}
-                    onPointerDown={(e) => onPointerDownNode(e, n)}
-                    onClick={() => handleConnect(n)}
-                    onMouseEnter={() => setHoverId(n.id)}
-                    onMouseLeave={() => setHoverId(null)}
-                    style={{ cursor: mode === "connect" ? "crosshair" : "grab" }}
-                  >
-                    <circle r={r} fill={n.fill ?? (bulkFillTransparent ? "none" : bulkFill)} stroke={hi ? styles.necessary.color : (n.stroke || bulkStroke)} strokeWidth={n.strokeWidth ?? bulkStrokeWidth} />
-                    <circle r={r - 2} fill="none" stroke="#2c2c3c" strokeWidth={1} />
+                  const st = styles[l.type];
+                  return (
+                    <g key={l.id} onDoubleClick={() => { pushHistory(); setLinks((p) => p.filter((x) => x.id !== l.id)); }} onClick={() => (lastClickedLinkRef.current = l.id)}>
+                      <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={st.color} strokeWidth={st.width} strokeDasharray={dashFor(l.type)} markerStart={markerUrl(l.type, "start")} markerEnd={markerUrl(l.type, "end")} opacity={0.98} />
+                    </g>
+                  );
+                })}
+                {/* Nodes */}
+                {nodes.map((n) => {
+                  const r = rOf(n.area);
+                  const isSrc = linkSource === n.id && mode === "connect";
+                  const hi = hoverId === n.id || isSrc;
+                  const labelFont = n.textFont || bulkTextFont;
+                  const labelColor = n.textColor || bulkTextColor;
+                  const labelSize = clampTextSize(n.textSize ?? bulkTextSize);
+                  const areaSize = Math.max(TEXT_MIN, labelSize - 1);
+                  return (
+                    <g
+                      key={n.id}
+                      transform={`translate(${n.x || 0},${n.y || 0})`}
+                      onPointerDown={(e) => onPointerDownNode(e, n)}
+                      onClick={() => handleConnect(n)}
+                      onMouseEnter={() => setHoverId(n.id)}
+                      onMouseLeave={() => setHoverId(null)}
+                      style={{ cursor: mode === "connect" ? "crosshair" : "grab" }}
+                    >
+                      <circle r={r} fill={n.fill ?? (bulkFillTransparent ? "none" : bulkFill)} stroke={hi ? styles.necessary.color : (n.stroke || bulkStroke)} strokeWidth={n.strokeWidth ?? bulkStrokeWidth} />
+                      <circle r={r - 2} fill="none" stroke="#2c2c3c" strokeWidth={1} />
 
-                    <text
-                      textAnchor="middle"
-                      dominantBaseline="middle"
-                      className="select-none"
-                      style={{
-                        fill: labelColor,
-                        fontSize: labelSize,
-                        fontWeight: 600,
-                        letterSpacing: 0.4,
-                        fontFamily: labelFont,
-                      }}>
-                      {(() => {
-                        const pad = 10;
-                        const maxW = Math.max(20, (r - pad) * 2);
-                        const lines = wrapToWidth(n.name, labelFont, labelSize, maxW, 5);
-                        const gap = Math.max(2, Math.round(labelSize * 0.2));
-                        const total = lines.length * labelSize + (lines.length - 1) * gap;
-                        const startY = -total / 2 + labelSize * 0.8;
-                        return lines.map((line, i) => (
-                          <tspan key={i} x={0} y={startY + i * (labelSize + gap)}>{line}</tspan>
-                        ));
-                      })()}
-                    </text>
-
-                    {showMeasurements && (
-                      <text y={r - 18} textAnchor="middle" style={{ fill: THEME.subtle, fontSize: areaSize, fontFamily: labelFont }}>
-                        {n.area} m²
+                      <text
+                        textAnchor="middle"
+                        dominantBaseline="middle"
+                        className="select-none"
+                        style={{
+                          fill: labelColor,
+                          fontSize: labelSize,
+                          fontWeight: 600,
+                          letterSpacing: 0.4,
+                          fontFamily: labelFont,
+                        }}>
+                        {(() => {
+                          const pad = 10;
+                          const maxW = Math.max(20, (r - pad) * 2);
+                          const lines = wrapToWidth(n.name, labelFont, labelSize, maxW, 5);
+                          const gap = Math.max(2, Math.round(labelSize * 0.2));
+                          const total = lines.length * labelSize + (lines.length - 1) * gap;
+                          const startY = -total / 2 + labelSize * 0.8;
+                          return lines.map((line, i) => (
+                            <tspan key={i} x={0} y={startY + i * (labelSize + gap)}>{line}</tspan>
+                          ));
+                        })()}
                       </text>
-                    )}
 
-                    {/* disable editor hitboxes while connecting so clicks create links */}
-                    <foreignObject x={-r} y={-18} width={r * 2} height={36} data-ignore-export style={{ pointerEvents: mode === "connect" ? "none" : "auto" }}>
-                      <InlineEdit text={n.name} onChange={(val) => renameNode(n.id, val)} className="mx-auto text-center" />
-                    </foreignObject>
-                    <foreignObject x={-40} y={r - 22} width={80} height={26} data-ignore-export style={{ pointerEvents: mode === "connect" ? "none" : "auto" }}>
-                      <InlineEdit text={`${n.area}`} onChange={(val) => changeArea(n.id, val)} className="text-center" />
-                    </foreignObject>
-                  </g>
-                );
-              })}
-            </g>
-          </svg>
+                      {showMeasurements && (
+                        <text y={r - 18} textAnchor="middle" style={{ fill: THEME.subtle, fontSize: areaSize, fontFamily: labelFont }}>
+                          {n.area} m²
+                        </text>
+                      )}
 
-          {/* Status pill (not exported) */}
-          <div className="absolute left-3 bottom-3 text-xs text-[#9aa0a6] bg-black/30 rounded-full px-3 py-1" data-ignore-export>
-            Mode: <span className="font-semibold text-white">{mode}</span>{mode === "connect" && linkSource && <span> • select a target…</span>}
-            {selectedNode && <span> • Editing: <span className="text-white">{selectedNode.name}</span></span>}
+                      {/* disable editor hitboxes while connecting so clicks create links */}
+                      <foreignObject x={-r} y={-18} width={r * 2} height={36} data-ignore-export style={{ pointerEvents: mode === "connect" ? "none" : "auto" }}>
+                        <InlineEdit text={n.name} onChange={(val) => renameNode(n.id, val)} className="mx-auto text-center" />
+                      </foreignObject>
+                      <foreignObject x={-40} y={r - 22} width={80} height={26} data-ignore-export style={{ pointerEvents: mode === "connect" ? "none" : "auto" }}>
+                        <InlineEdit text={`${n.area}`} onChange={(val) => changeArea(n.id, val)} className="text-center" />
+                      </foreignObject>
+                    </g>
+                  );
+                })}
+              </g>
+            </svg>
+
+            {/* Floating canvas dock (top-right) */}
+            <div className="absolute right-3 top-3 flex flex-col gap-2" data-ignore-export>
+              <div className="bg-black/35 backdrop-blur p-2 rounded-xl border border-[#2a2a3a] flex flex-col gap-2">
+                <button className="dock-btn btn" title="Zoom out" onClick={zoomOut}>−</button>
+                <button className="dock-btn btn" title="Reset view" onClick={resetZoom}>⟲</button>
+                <button className="dock-btn btn" title="Fit to view" onClick={fitToView}>⤢</button>
+                <button className="dock-btn btn" title="Zoom in" onClick={zoomIn}>＋</button>
+              </div>
+              <div className="bg-black/35 backdrop-blur p-2 rounded-xl border border-[#2a2a3a] flex flex-col gap-2">
+                <button className="dock-btn btn" onClick={()=>setPhysics(p=>!p)}>{physics?"⏸":"▶"}</button>
+                <button className="dock-btn btn" onClick={detanglePulse}>✺</button>
+                <button className="dock-btn btn" onClick={toggleFullscreen}>{isFullscreen?"⤢":"⤢"}</button>
+              </div>
+              <div className="bg-black/35 backdrop-blur p-2 rounded-xl border border-[#2a2a3a] flex flex-col gap-2">
+                <button className="dock-btn btn" onClick={exportSVG}>SVG</button>
+                <button className="dock-btn btn" onClick={exportPNG}>PNG</button>
+              </div>
+            </div>
+
+            {/* Status pill */}
+            <div className="absolute left-3 bottom-3 text-xs text-[#9aa0a6] bg-black/30 rounded-full px-3 py-1" data-ignore-export>
+              Mode: <span className="font-semibold text-white">{mode}</span>{mode === "connect" && linkSource && <span> • select a target…</span>}
+              {selectedNode && <span> • Editing: <span className="text-white">{selectedNode.name}</span></span>}
+              <span> • Line: <span className="text-white capitalize">{currentLineType}</span></span>
+            </div>
+          </div>
+
+          {/* About */}
+          <div className="mt-3 card">
+            <div className="text-sm">
+              <p><strong>Authored by:</strong> Mark Jay O. Gooc — Architecture student, Batangas State University – TNEU.</p>
+              <p className="opacity-70 text-xs mt-1">All Rights Reserve 2025.</p>
+            </div>
           </div>
         </div>
-      </div>
-
-      {/* About section */}
-      <div className="mx-auto max-w-[1400px] px-4 pb-16">
-        <details className="bg-[#121220] rounded-2xl border border-[#2a2a3a] p-4">
-          <summary className="cursor-pointer select-none text-sm font-semibold tracking-wide text-[#9aa0a6]">
-            About this tool
-          </summary>
-          <div className="mt-3 text-sm leading-6 text-[#d8d8e2]">
-            <p><strong>Authored by:</strong> Mark Jay O. Gooc — Architecture student, Batangas State University – TNEU. </p>
-            <p className="opacity-80">All Rights Reserve 2025.</p>
-          </div>
-        </details>
       </div>
     </div>
   );
