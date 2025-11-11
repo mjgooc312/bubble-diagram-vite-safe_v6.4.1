@@ -266,6 +266,9 @@ export default function BubbleAdjacencyApp() {
   // Right panel (D5-style) toggle
   const [panelOpen, setPanelOpen] = useState(true);
   const [leftPanelOpen, setLeftPanelOpen] = useState(true);
+  // Compact layout for right panel
+  const [panelCompact, setPanelCompact] = useState(false);
+
 
   // Changelog banner show-once per version
   const [showChangelog, setShowChangelog] = useState(false);
@@ -1156,6 +1159,20 @@ function zeroVelocities() {
 {/* Right Panel */}
             <div className={panelOpen ? "fixed right-0 top-0 z-30 h-screen w-[420px] overflow-y-auto overflow-x-hidden border-l panel-scroll border-[#2a2a3a] bg-[#0b0b12]" : "fixed right-0 top-0 z-20 h-screen w-[56px] overflow-y-auto border-l border-[#2a2a3a] bg-[#0b0b12]"} data-aside="true">
         <div className="px-4 py-5 pb-24 grid grid-cols-1 gap-4 min-w-0">
+          {/* Panel quick tools */}
+          <div className="sticky top-0 z-10 -mx-4 px-4 pb-2 bg-[#0b0b12]/90 backdrop-blur border-b border-[#2a2a3a]">
+            <div className="flex items-center justify-between text-xs">
+              <div className="font-semibold tracking-wide text-white/70">Tool Settings</div>
+              <button
+                onClick={() => setPanelCompact(v => !v)}
+                className="px-3 py-1.5 rounded-full border border-white/10 hover:bg-white/5"
+                title="Toggle compact layout"
+              >
+                {panelCompact ? "Comfort" : "Compact"}
+              </button>
+            </div>
+          </div>
+
           {/* Panel toggle */}
           <button
             className="absolute left-[-28px] top-4 h-8 w-8 rounded-full border border-[#2a2a3a] bg-[#0b0b12] hover:bg-white/5 text-xs"
