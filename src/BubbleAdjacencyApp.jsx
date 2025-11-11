@@ -1,6 +1,15 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as d3 from "d3";
+// App version & changelog banner (top-level)
+const APP_VERSION = "6.5.1";
+const CHANGELOG_ITEMS = [
+  "NEW: Scenes — save/restore positions and zoom.",
+  "FIXED: Update-from-list maps by name; correct bubble updates after JSON import.",
+  "NEW: Precise label wrapping inside bubbles.",
+  "TWEAK: Toolbar organized into clear sections.",
+];
+
 
 /**
  * Bubble Diagram Builder – Force-directed (React + D3)
@@ -34,16 +43,7 @@ const TEXT_MAX = 28;
 
 // Font stacks
 const FONT_STACKS = {
-
-// App version & changelog banner
-const APP_VERSION = "6.5.0";
-const CHANGELOG_ITEMS = [
-  "NEW: Scenes — save/restore positions and zoom.",
-  "FIXED: Update-from-list maps by name; correct bubble updates after JSON import.",
-  "NEW: Precise label wrapping inside bubbles.",
-  "TWEAK: Toolbar organized into clear sections."
-];
-  Outfit: "Outfit, Inter, system-ui, Arial, sans-serif",
+Outfit: "Outfit, Inter, system-ui, Arial, sans-serif",
   Inter: "Inter, system-ui, Arial, sans-serif",
   Poppins: "Poppins, system-ui, Arial, sans-serif",
   Roboto: "Roboto, system-ui, Arial, sans-serif",
