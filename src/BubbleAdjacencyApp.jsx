@@ -3,15 +3,15 @@ import * as d3 from "d3";
 
 /**
  * Bubble Diagram Builder – Force-directed (React + D3)
- * v4.5 — Detangle pulse + Connect-mode click fix + Readability tweaks
+ * v4.5a — Arrows above bubbles (layering fix) + Detangle pulse + Connect-mode click fix + Readability tweaks
  *
+ * • Arrows (links) now render ABOVE bubble circles but BELOW labels/editors.
  * • “De-tangle (explode→shrink)” button to separate connected bubbles.
  * • Connect mode: editors don’t block clicks; dragging disabled while connecting.
- * • NEW: High-contrast dropdowns (class .ui-select) for dark UI.
- * • NEW: Label halo stroke so text stays readable on any fill.
+ * • High-contrast dropdowns (class .ui-select) for dark UI.
  */
 
-// ---- Theme (UI chrome only; not the canvas background) ----------------------
+ // ---- Theme (UI chrome only; not the canvas background) ----------------------
 const THEME = {
   bg: "#0b0b12",
   surface: "#121220",
@@ -1347,7 +1347,33 @@ VOD Review / Theater, 60`} value={rawList} onChange={(e) => setRawList(e.target.
           <svg ref={svgRef} width={"100%"} height={700} viewBox={`-600 -350 1200 700`} className="block">
             <MarkerDefs styles={styles} />
             <g id="zoomable" transform={zoomTransform.toString()}>
-              {/* Links */}
+              {/* --- 1) BUBBLES UNDERLAY (circles only) --- */}
+              {nodes.map((n) => {
+                const r = rOf(n.area);
+                const isSrc = linkSource === n.id && mode === "connect";
+                const hi = hoverId === n.id || isSrc;
+                return (
+                  <g
+                    key={`under-${n.id}`}
+                    transform={`translate(${n.x || 0},${n.y || 0})`}
+                    onPointerDown={(e) => onPointerDownNode(e, n)}
+                    onClick={() => handleConnect(n)}
+                    onMouseEnter={() => setHoverId(n.id)}
+                    onMouseLeave={() => setHoverId(null)}
+                    style={{ cursor: mode === "connect" ? "crosshair" : "grab" }}
+                  >
+                    <circle
+                      r={r}
+                      fill={n.fill ?? (bulkFillTransparent ? "none" : bulkFill)}
+                      stroke={hi ? styles.necessary.color : (n.stroke || bulkStroke)}
+                      strokeWidth={n.strokeWidth ?? bulkStrokeWidth}
+                    />
+                    <circle r={r - 2} fill="none" stroke="#2c2c3c" strokeWidth={1} />
+                  </g>
+                );
+              })}
+
+              {/* --- 2) LINKS ABOVE CIRCLES, BELOW LABELS --- */}
               {links.map((l) => {
                 const s = nodes.find((n) => n.id === l.source); const t = nodes.find((n) => n.id === l.target);
                 if (!s || !t) return null;
@@ -1365,23 +1391,37 @@ VOD Review / Theater, 60`} value={rawList} onChange={(e) => setRawList(e.target.
 
                 const st = styles[l.type];
                 return (
-                  <g key={l.id} onDoubleClick={() => { pushHistory(); setLinks((p) => p.filter((x) => x.id !== l.id)); }} onClick={() => (lastClickedLinkRef.current = l.id)}>
-                    <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={st.color} strokeWidth={st.width} strokeDasharray={dashFor(l.type)} markerStart={markerUrl(l.type, "start")} markerEnd={markerUrl(l.type, "end")} opacity={0.98} />
+                  <g
+                    key={l.id}
+                    onDoubleClick={() => { pushHistory(); setLinks((p) => p.filter((x) => x.id !== l.id)); }}
+                    onClick={() => (lastClickedLinkRef.current = l.id)}
+                    style={{ pointerEvents: "visibleStroke" }}
+                  >
+                    <line
+                      x1={x1} y1={y1} x2={x2} y2={y2}
+                      stroke={st.color}
+                      strokeWidth={st.width}
+                      strokeDasharray={dashFor(l.type)}
+                      markerStart={markerUrl(l.type, "start")}
+                      markerEnd={markerUrl(l.type, "end")}
+                      opacity={0.98}
+                      strokeLinecap="round"
+                    />
                   </g>
                 );
               })}
-              {/* Nodes */}
+
+              {/* --- 3) LABELS & EDITORS ON TOP --- */}
               {nodes.map((n) => {
                 const r = rOf(n.area);
                 const isSrc = linkSource === n.id && mode === "connect";
-                const hi = hoverId === n.id || isSrc;
                 const labelFont = n.textFont || bulkTextFont;
                 const labelColor = n.textColor || bulkTextColor;
                 const labelSize = clampTextSize(n.textSize ?? bulkTextSize);
                 const areaSize = Math.max(TEXT_MIN, labelSize - 1);
                 return (
                   <g
-                    key={n.id}
+                    key={`over-${n.id}`}
                     transform={`translate(${n.x || 0},${n.y || 0})`}
                     onPointerDown={(e) => onPointerDownNode(e, n)}
                     onClick={() => handleConnect(n)}
@@ -1389,9 +1429,6 @@ VOD Review / Theater, 60`} value={rawList} onChange={(e) => setRawList(e.target.
                     onMouseLeave={() => setHoverId(null)}
                     style={{ cursor: mode === "connect" ? "crosshair" : "grab" }}
                   >
-                    <circle r={r} fill={n.fill ?? (bulkFillTransparent ? "none" : bulkFill)} stroke={hi ? styles.necessary.color : (n.stroke || bulkStroke)} strokeWidth={n.strokeWidth ?? bulkStrokeWidth} />
-                    <circle r={r - 2} fill="none" stroke="#2c2c3c" strokeWidth={1} />
-
                     <text
                       textAnchor="middle"
                       dominantBaseline="middle"
