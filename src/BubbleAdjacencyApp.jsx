@@ -1,3 +1,4 @@
+import { useRef } from "react";
 
           {/* Quick-jump sticky nav */}
           <div className="sticky top-0 z-10 -mx-4 px-4 py-2 bg-[#0b0b12]/95 backdrop-blur border-b border-[#2a2a3a]">
@@ -13,6 +14,25 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as d3 from "d3";
+
+class ErrorBoundary extends React.Component {
+  constructor(props){ super(props); this.state = { hasError: false, error: null }; }
+  static getDerivedStateFromError(error){ return { hasError: true, error }; }
+  componentDidCatch(error, info){ console.error("App crash:", error, info); }
+  render(){
+    if(this.state.hasError){
+      return (<ErrorBoundary>
+        <div style={{padding:16,color:"#fca5a5"}}>
+          <b>Something went wrong.</b>
+          <pre style={{whiteSpace:"pre-wrap"}}>{String(this.state.error)}</pre>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+
 // App version & changelog banner (top-level)
 const APP_VERSION = "6.5.1";
 const CHANGELOG_ITEMS = [
@@ -129,7 +149,7 @@ function scaleRadius(nodes) {
   const sqrtAreas = nodes.map((n) => Math.sqrt(Math.max(1, n.area || 1)));
   const min = d3.min(sqrtAreas) ?? 1;
   const max = d3.max(sqrtAreas) ?? 1;
-  return (area) =>
+  return (<ErrorBoundary>area) =>
       {/* Global scrollbar styling for side panels */}
       <style>{`
         .panel-scroll { scrollbar-gutter: stable both-edges; }
@@ -440,7 +460,7 @@ useEffect(() => {
       .force("center", d3.forceCenter(0, 0))
       .force("spin", makeSpinForce(rotationSensitivity)); // NEW
     simRef.current = sim;
-    return () => sim.stop();
+    return (<ErrorBoundary>) => sim.stop();
   }, []);
 
   // Re-apply spin force when sensitivity changes
@@ -483,7 +503,7 @@ useEffect(() => {
       });
     };
     sim.on("tick", onTick);
-    return () => {
+    return (<ErrorBoundary>) => {
       sim.on("tick", null);
       if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
     };
@@ -701,7 +721,7 @@ function updateFromList() {
       }
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    return (<ErrorBoundary>) => window.removeEventListener("keydown", onKey);
   }, []);
 
   
@@ -1043,7 +1063,7 @@ function zeroVelocities() {
     // Double-click to reset zoom
     svg.on("dblclick.zoom", null); // disable default dblclick zoom
     svg.on("dblclick", () => resetZoom());
-    return () => svg.on(".zoom", null);
+    return (<ErrorBoundary>) => svg.on(".zoom", null);
   }, []);
 
   function resetZoom() {
@@ -1087,7 +1107,7 @@ function zeroVelocities() {
   useEffect(() => {
     const onFs = () => setIsFullscreen(!!document.fullscreenElement);
     document.addEventListener("fullscreenchange", onFs);
-    return () => document.removeEventListener("fullscreenchange", onFs);
+    return (<ErrorBoundary>) => document.removeEventListener("fullscreenchange", onFs);
   }, []);
   function toggleFullscreen() {
     const el = containerRef.current;
@@ -1115,7 +1135,7 @@ function zeroVelocities() {
     return liveBgCustom || THEME.surface;
   })();
 
-  return (
+  return (<ErrorBoundary>
     <div
       className="w-full min-h-screen"
       style={{ background: THEME.bg, color: THEME.text }}
@@ -1479,7 +1499,7 @@ VOD Review / Theater, 60`} value={rawList} onChange={(e) => setRawList(e.target.
                 const y2 = t.y - ny * (rt + 6 - insetT);
 
                 const st = styles[l.type];
-                return (
+                return (<ErrorBoundary>
                   <g key={l.id} onDoubleClick={() => { pushHistory(); setLinks((p) => p.filter((x) => x.id !== l.id)); }} onClick={() => (lastClickedLinkRef.current = l.id)}>
                     <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={st.color} strokeWidth={st.width} strokeDasharray={dashFor(l.type)} markerStart={markerUrl(l.type, "start")} markerEnd={markerUrl(l.type, "end")} opacity={0.98} />
                   </g>
@@ -1494,7 +1514,7 @@ VOD Review / Theater, 60`} value={rawList} onChange={(e) => setRawList(e.target.
                 const labelColor = n.textColor || bulkTextColor;
                 const labelSize = clampTextSize(n.textSize ?? bulkTextSize);
                 const areaSize = Math.max(TEXT_MIN, labelSize - 1);
-                return (
+                return (<ErrorBoundary>
                   <g
                     key={n.id}
                     transform={`translate(${n.x || 0},${n.y || 0})`}
@@ -1575,7 +1595,7 @@ function InlineEdit({ text, onChange, className }) {
   const [val, setVal] = useState(text);
   useEffect(() => setVal(text), [text]);
   if (!editing) {
-    return (
+    return (<ErrorBoundary>
       <div
         onDoubleClick={(e) => { e.stopPropagation(); setEditing(true); }}
         className={`pointer-events-auto select-none text-[11px] text-white/90 bg-transparent ${className}`}
@@ -1585,7 +1605,7 @@ function InlineEdit({ text, onChange, className }) {
       </div>
     );
   }
-  return (
+  return (<ErrorBoundary>
     <input
       autoFocus
       value={val}
@@ -1603,7 +1623,7 @@ function InlineEdit({ text, onChange, className }) {
 function InlineEditField({ label, value, onChange }) {
   const [val, setVal] = useState(value);
   useEffect(() => setVal(value), [value]);
-  return (
+  return (<ErrorBoundary>
     <label className="text-xs text-[#9aa0a6] grid gap-1">
       <span>{label}</span>
       <input
@@ -1704,4 +1724,4 @@ function wrapToWidth(label, fontFamily, fontPx, maxWidth, maxLines = 5) {
     console.assert(clampTextSize(5) === TEXT_MIN, "text size min clamp");
     console.assert(clampTextSize(99) === TEXT_MAX, "text size max clamp");
   } catch (e) { console.warn("Smoke tests warning:", e); }
-})();
+})(</ErrorBoundary>);
