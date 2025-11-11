@@ -1429,8 +1429,8 @@ VOD Review / Theater, 60`} value={rawList} onChange={(e) => setRawList(e.target.
             About this tool
           </summary>
           <div className="mt-3 text-sm leading-6 text-[#d8d8e2]">
-            <p><strong>Authored by:</strong> Mark Jay O. Gooc — Architecture student, Batangas State University – TNEU</p>
-            <p className="opacity-80">All rights Reserve 2025.</p>
+            <p><strong>Authored by:</strong> Mark Jay O. Gooc — Architecture student, Batangas State University – TNEU. </p>
+            <p className="opacity-80">All Rights Reserve 2025.</p>
           </div>
         </details>
       </div>
