@@ -1121,7 +1121,7 @@ function zeroVelocities() {
       )}
 {/* Right Panel */}
             <div className={panelOpen ? "fixed right-0 top-0 z-20 h-screen w-[420px] overflow-y-auto overflow-x-hidden border-l border-[#2a2a3a] bg-[#0b0b12]" : "fixed right-0 top-0 z-20 h-screen w-[56px] overflow-y-auto border-l border-[#2a2a3a] bg-[#0b0b12]"} data-aside="true">
-        <div className="px-3 py-3 grid grid-cols-1 gap-3 min-w-0">
+        <div className="px-4 py-5 grid grid-cols-1 gap-4 min-w-0">
           {/* Panel toggle */}
           <button
             className="absolute left-[-28px] top-4 h-8 w-8 rounded-full border border-[#2a2a3a] bg-[#0b0b12] hover:bg-white/5 text-xs"
@@ -1140,7 +1140,7 @@ function zeroVelocities() {
 
           <div className="ml-auto flex flex-wrap items-center gap-2">
             
-            <div className="col-span-2 text-[10px] uppercase tracking-[0.14em] text-[#9aa0a6]/80 mt-1">Modes & Actions</div>
+            <div className="col-span-2 text-[10px] uppercase tracking-[0.14em] text-[#9aa0a6]/80 mt-2 mb-1">Modes & Actions</div>
 {/* Modes */}
             <button className={`px-3 py-2 rounded-xl border ${mode === "select" ? "bg-white/10" : ""} border-[#2a2a3a] text-sm`} onClick={() => setMode("select")}>
               Select / Drag
@@ -1155,7 +1155,7 @@ function zeroVelocities() {
 
             {/* Line style controls */}
             {["necessary", "ideal"].map((key) => (
-              <div key={key} className="col-span-2 md:col-span-6 lg:col-span-4 flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
+              <div key={key} className="col-span-2 md:col-span-6 lg:col-span-4 flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs w-full">
                 <span className="opacity-70 w-16 capitalize">{key}</span>
                 <input type="color" value={styles[key].color} title={`${key} color`} onChange={(e) => setStyles((s) => ({ ...s, [key]: { ...s[key], color: e.target.value } }))} />
                 <label className="flex items-center gap-1"><input type="checkbox" checked={styles[key].dashed} onChange={(e) => setStyles((s) => ({ ...s, [key]: { ...s[key], dashed: e.target.checked } }))} /> dashed</label>
@@ -1174,9 +1174,9 @@ function zeroVelocities() {
             ))}
 
             
-            <div className="col-span-2 text-[10px] uppercase tracking-[0.14em] text-[#9aa0a6]/80 mt-1">Bubbles</div>
+            <div className="col-span-2 text-[10px] uppercase tracking-[0.14em] text-[#9aa0a6]/80 mt-2 mb-1">Bubbles</div>
 {/* Bubble (node) bulk styles */}
-            <div className="col-span-2 md:col-span-6 lg:col-span-4 flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
+            <div className="col-span-2 md:col-span-6 lg:col-span-4 flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs w-full">
               <span className="opacity-70">Bubbles:</span>
               <label className="flex items-center gap-1">Fill
                 <input type="color" value={bulkFill} onChange={(e) => setBulkFill(e.target.value)} disabled={bulkFillTransparent} />
@@ -1192,7 +1192,7 @@ function zeroVelocities() {
             </div>
 
             {/* Text (label) bulk styles */}
-            <div className="col-span-2 md:col-span-6 lg:col-span-4 flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
+            <div className="col-span-2 md:col-span-6 lg:col-span-4 flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs w-full">
               <span className="opacity-70">Labels:</span>
               <select className="bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" value={bulkTextFont} onChange={(e) => setBulkTextFont(e.target.value)}>
                 <option value={FONT_STACKS.Outfit}>Outfit</option>
@@ -1210,9 +1210,9 @@ function zeroVelocities() {
             </div>
 
             
-            <div className="col-span-2 text-[10px] uppercase tracking-[0.14em] text-[#9aa0a6]/80 mt-1">Export Background</div>
+            <div className="col-span-2 text-[10px] uppercase tracking-[0.14em] text-[#9aa0a6]/80 mt-2 mb-1">Export Background</div>
 {/* Export background */}
-            <div className="col-span-2 md:col-span-6 lg:col-span-4 flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
+            <div className="col-span-2 md:col-span-6 lg:col-span-4 flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs w-full">
               <span className="opacity-70">Export BG:</span>
               <label className="flex items-center gap-1"><input type="radio" name="bg-exp" checked={exportBgMode === "transparent"} onChange={() => setExportBgMode("transparent")} /> transparent</label>
               <label className="flex items-center gap-1"><input type="radio" name="bg-exp" checked={exportBgMode === "white"} onChange={() => setExportBgMode("white")} /> white</label>
@@ -1221,9 +1221,9 @@ function zeroVelocities() {
             </div>
 
             
-            <div className="col-span-2 text-[10px] uppercase tracking-[0.14em] text-[#9aa0a6]/80 mt-1">Live Background</div>
+            <div className="col-span-2 text-[10px] uppercase tracking-[0.14em] text-[#9aa0a6]/80 mt-2 mb-1">Live Background</div>
 {/* Live background */}
-            <div className="col-span-2 md:col-span-6 lg:col-span-4 flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
+            <div className="col-span-2 md:col-span-6 lg:col-span-4 flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs w-full">
               <span className="opacity-70">Live BG:</span>
               <label className="flex items-center gap-1"><input type="radio" name="bg-live" checked={liveBgMode === "transparent"} onChange={() => setLiveBgMode("transparent")} /> transparent</label>
               <label className="flex items-center gap-1"><input type="radio" name="bg-live" checked={liveBgMode === "white"} onChange={() => setLiveBgMode("white")} /> white</label>
@@ -1232,9 +1232,9 @@ function zeroVelocities() {
             </div>
 
             
-            <div className="col-span-2 text-[10px] uppercase tracking-[0.14em] text-[#9aa0a6]/80 mt-1">Spacing & Overlap</div>
+            <div className="col-span-2 text-[10px] uppercase tracking-[0.14em] text-[#9aa0a6]/80 mt-2 mb-1">Spacing & Overlap</div>
 {/* Buffer */}
-            <div className="col-span-2 md:col-span-6 lg:col-span-4 flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
+            <div className="col-span-2 md:col-span-6 lg:col-span-4 flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs w-full">
               <span className="opacity-70">Buffer:</span>
               <input type="range" min={0} max={80} step={1} value={buffer} onChange={(e) => setBuffer(+e.target.value)} />
               <input type="number" min={0} max={80} value={buffer} className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" onChange={(e) => setBuffer(Math.max(0, Math.min(80, +e.target.value || 0)))} />
@@ -1242,7 +1242,7 @@ function zeroVelocities() {
             </div>
 
             {/* NEW: Arrow Overlap */}
-            <div className="col-span-2 md:col-span-6 lg:col-span-4 flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
+            <div className="col-span-2 md:col-span-6 lg:col-span-4 flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs w-full">
               <span className="opacity-70">Arrow overlap:</span>
               <input type="range" min={0} max={60} step={1} value={arrowOverlap} onChange={(e) => setArrowOverlap(+e.target.value)} />
               <input type="number" min={0} max={200} value={arrowOverlap} className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" onChange={(e) => setArrowOverlap(Math.max(0, Math.min(200, +e.target.value || 0)))} />
@@ -1250,14 +1250,14 @@ function zeroVelocities() {
             </div>
 
             {/* NEW: Rotation Sensitivity */}
-            <div className="col-span-2 md:col-span-6 lg:col-span-4 flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
+            <div className="col-span-2 md:col-span-6 lg:col-span-4 flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs w-full">
               <span className="opacity-70">Rotation sensitivity:</span>
               <input type="range" min={0} max={100} step={1} value={rotationSensitivity} onChange={(e) => setRotationSensitivity(+e.target.value)} />
               <input type="number" min={0} max={100} value={rotationSensitivity} className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" onChange={(e) => setRotationSensitivity(Math.max(0, Math.min(100, +e.target.value || 0)))} />
               <span className="opacity-70">%</span>
             </div>
             {/* Measurements toggle */}
-            <div className="col-span-2 md:col-span-6 lg:col-span-4 flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
+            <div className="col-span-2 md:col-span-6 lg:col-span-4 flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs w-full">
               <label className="flex items-center gap-1">
                 <input type="checkbox" checked={showMeasurements} onChange={(e) => setShowMeasurements(e.target.checked)} />
                 show m² labels
@@ -1272,7 +1272,7 @@ function zeroVelocities() {
             
 {/* Scenes */}
 <div className="w-full flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-2 py-2 text-xs">
-               <div className="col-span-2 text-[10px] uppercase tracking-[0.14em] text-[#9aa0a6]/80 mt-1">Scenes</div>             <span className="opacity-70">Scene:</span>
+               <div className="col-span-2 text-[10px] uppercase tracking-[0.14em] text-[#9aa0a6]/80 mt-2 mb-1">Scenes</div>             <span className="opacity-70">Scene:</span>
   <select className="bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
           value={activeSceneId || ""}
           onChange={(e) => setActiveSceneId(e.target.value || null)}>
@@ -1289,7 +1289,7 @@ function zeroVelocities() {
 </div>
 
             
-            <div className="col-span-2 text-[10px] uppercase tracking-[0.14em] text-[#9aa0a6]/80 mt-1">View & Export</div>
+            <div className="col-span-2 text-[10px] uppercase tracking-[0.14em] text-[#9aa0a6]/80 mt-2 mb-1">View & Export</div>
 {/* Zoom controls */}
             <div className="w-full flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-2 py-2 text-xs">
               <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" onClick={zoomOut}>−</button>
@@ -1315,7 +1315,7 @@ function zeroVelocities() {
       
 {/* Left Panel */}
             <div className={leftPanelOpen ? "fixed left-0 top-0 z-20 h-screen w-[420px] overflow-y-auto overflow-x-hidden border-r border-[#2a2a3a] bg-[#0b0b12]" : "fixed left-0 top-0 z-20 h-screen w-[56px] overflow-y-auto overflow-x-hidden border-r border-[#2a2a3a] bg-[#0b0b12]"}>
-              <div className="px-3 py-3 grid grid-cols-1 gap-3 min-w-0">
+              <div className="px-4 py-5 grid grid-cols-1 gap-4 min-w-0">
                 {/* Panel toggle */}
                 <button
                   className="absolute right-[-28px] top-4 h-8 w-8 rounded-full border border-[#2a2a3a] bg-[#0b0b12] hover:bg-white/5 text-xs"
@@ -1324,7 +1324,7 @@ function zeroVelocities() {
                 >{leftPanelOpen ? "«" : "»"}</button>
 
                 {/* Panels stacked */}
-                <div className="rounded-2xl border border-[#2a2a3a] bg-[#121220] p-4 w-full min-w-0">
+                <div className="rounded-2xl border border-[#2a2a3a] bg-[#121220] p-4 w-full min-w-0 space-y-4">
 {/* Input list */}
         <div className="col-span-1 bg-[#121220] rounded-2xl border border-[#2a2a3a] p-4">
           <div className="flex items-center justify-between gap-2 mb-2">
@@ -1411,7 +1411,7 @@ VOD Review / Theater, 60`} value={rawList} onChange={(e) => setRawList(e.target.
 
 {/* Canvas */}
 
-      <div className="mx-auto max-w-[1400px] px-4 my-4 md:pl-[440px] md:pr-[440px]">
+      <div className="mx-auto max-w-[1400px] px-6 my-8 md:pl-[460px] md:pr-[460px]">
         <div ref={containerRef} className="relative rounded-2xl border border-[#2a2a3a] overflow-hidden" style={{ background: liveBg }}>
           <svg ref={svgRef} width={"100%"} height={700} viewBox={`-600 -350 1200 700`} className="block">
             <MarkerDefs styles={styles} />
