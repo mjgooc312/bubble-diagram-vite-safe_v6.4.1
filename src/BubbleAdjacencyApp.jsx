@@ -231,6 +231,7 @@ export default function BubbleAdjacencyApp() {
 
   // Right panel (D5-style) toggle
   const [panelOpen, setPanelOpen] = useState(true);
+  const [leftPanelOpen, setLeftPanelOpen] = useState(true);
 
   // Changelog banner show-once per version
   const [showChangelog, setShowChangelog] = useState(false);
@@ -1119,8 +1120,8 @@ function zeroVelocities() {
         </div>
       )}
 {/* Right Panel */}
-            <div className={panelOpen ? "fixed right-0 top-0 z-20 h-screen w-[420px] overflow-y-auto border-l border-[#2a2a3a] bg-[#0b0b12]" : "fixed right-0 top-0 z-20 h-screen w-[56px] overflow-y-auto border-l border-[#2a2a3a] bg-[#0b0b12]"} data-aside="true">
-        <div className="px-3 py-3 grid grid-cols-1 gap-3">
+            <div className={panelOpen ? "fixed right-0 top-0 z-20 h-screen w-[420px] overflow-y-auto overflow-x-hidden border-l border-[#2a2a3a] bg-[#0b0b12]" : "fixed right-0 top-0 z-20 h-screen w-[56px] overflow-y-auto border-l border-[#2a2a3a] bg-[#0b0b12]"} data-aside="true">
+        <div className="px-3 py-3 grid grid-cols-1 gap-3 min-w-0">
           {/* Panel toggle */}
           <button
             className="absolute left-[-28px] top-4 h-8 w-8 rounded-full border border-[#2a2a3a] bg-[#0b0b12] hover:bg-white/5 text-xs"
@@ -1311,9 +1312,20 @@ function zeroVelocities() {
         </div>
       </div>
 
-      {/* Panels */}
-      <div className="mx-auto max-w-[1400px] px-4 mt-4 grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Input list */}
+      
+{/* Left Panel */}
+            <div className={leftPanelOpen ? "fixed left-0 top-0 z-20 h-screen w-[420px] overflow-y-auto overflow-x-hidden border-r border-[#2a2a3a] bg-[#0b0b12]" : "fixed left-0 top-0 z-20 h-screen w-[56px] overflow-y-auto overflow-x-hidden border-r border-[#2a2a3a] bg-[#0b0b12]"}>
+              <div className="px-3 py-3 grid grid-cols-1 gap-3 min-w-0">
+                {/* Panel toggle */}
+                <button
+                  className="absolute right-[-28px] top-4 h-8 w-8 rounded-full border border-[#2a2a3a] bg-[#0b0b12] hover:bg-white/5 text-xs"
+                  title={leftPanelOpen ? "Collapse" : "Expand"}
+                  onClick={()=>setLeftPanelOpen(p=>!p)}
+                >{leftPanelOpen ? "«" : "»"}</button>
+
+                {/* Panels stacked */}
+                <div className="rounded-2xl border border-[#2a2a3a] bg-[#121220] p-4 w-full min-w-0">
+{/* Input list */}
         <div className="col-span-1 bg-[#121220] rounded-2xl border border-[#2a2a3a] p-4">
           <div className="flex items-center justify-between gap-2 mb-2">
             <h2 className="text-sm font-semibold tracking-wide text-[#9aa0a6]">List of Spaces (name, area m²)</h2>
@@ -1393,9 +1405,13 @@ VOD Review / Theater, 60`} value={rawList} onChange={(e) => setRawList(e.target.
             ))}
           </div>
         </div>
-      </div>
+                </div>
+              </div>
+            </div>
+
 {/* Canvas */}
-      <div className="mx-auto max-w-[1400px] px-4 my-4 md:pr-[440px]">
+
+      <div className="mx-auto max-w-[1400px] px-4 my-4 md:pl-[440px] md:pr-[440px]">
         <div ref={containerRef} className="relative rounded-2xl border border-[#2a2a3a] overflow-hidden" style={{ background: liveBg }}>
           <svg ref={svgRef} width={"100%"} height={700} viewBox={`-600 -350 1200 700`} className="block">
             <MarkerDefs styles={styles} />
