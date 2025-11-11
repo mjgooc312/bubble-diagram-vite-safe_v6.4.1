@@ -1116,7 +1116,7 @@ function zeroVelocities() {
         </div>
       )}
 <div className="sticky top-0 z-10 backdrop-blur bg-black/30 border-b border-[#2a2a3a]">
-        <div className="mx-auto max-w-[1400px] px-4 py-3 grid grid-cols-1 md:grid-cols-2 gap-3 auto-rows-min items-start">
+        <div className="mx-auto max-w-[1400px] px-4 py-3 grid items-start gap-3 grid-cols-[repeat(auto-fit,minmax(520px,1fr))]">
           <div className="font-semibold tracking-wide text-sm text-[#9aa0a6]">Bubble Diagram Builder</div>
 
           <div className="ml-auto flex flex-wrap items-center gap-2">
@@ -1252,7 +1252,7 @@ function zeroVelocities() {
 
             
 {/* Scenes */}
-<div className="col-span-1 flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-2 py-2 text-xs">
+<div className="w-full flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-2 py-2 text-xs">
                <div className="col-span-2 text-[10px] uppercase tracking-[0.14em] text-[#9aa0a6]/80 mt-1">Scenes</div>             <span className="opacity-70">Scene:</span>
   <select className="bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
           value={activeSceneId || ""}
@@ -1272,7 +1272,7 @@ function zeroVelocities() {
             
             <div className="col-span-2 text-[10px] uppercase tracking-[0.14em] text-[#9aa0a6]/80 mt-1">View & Export</div>
 {/* Zoom controls */}
-            <div className="col-span-1 flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-2 py-2 text-xs">
+            <div className="w-full flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-2 py-2 text-xs">
               <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" onClick={zoomOut}>−</button>
               <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" onClick={resetZoom}>Reset</button>
               <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" onClick={fitToView}>Fit</button>
