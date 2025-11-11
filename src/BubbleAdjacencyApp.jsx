@@ -168,23 +168,7 @@ function MarkerDefs({ styles }) {
 }
 
 // ------------------------- Persistence (localStorage) ------------------------
-
-// Mask that hides links inside bubbles to prevent visual overlap
-function LinkMask({ nodes, rOf }) {
-  return (
-    <defs>
-      <mask id="mask-links-hide-bubbles" maskUnits="userSpaceOnUse">
-        <rect x="-10000" y="-10000" width="20000" height="20000" fill="white" />
-        {nodes.map((n) => (
-          <circle key={n.id} cx={n.x || 0} cy={n.y || 0} r={Math.max(1, rOf(n.area) - 1)} fill="black" />
-        ))}
-      </mask>
-    </defs>
-  );
-}
-
 const LS_KEY = "bubbleBuilder:v1";
-
 function loadPresets() {
   try { return JSON.parse(localStorage.getItem(LS_KEY) || "{}"); } catch { return {}; }
 }
@@ -211,7 +195,23 @@ function makeSpinForce(level /* 0..100 */) {
 }
 
 // ----- Main App --------------------------------------------------------------
+
+// Mask that hides any link segments that enter a bubble
+function LinkMask({ nodes, rOf }) {
+  return (
+    <defs>
+      <mask id="mask-links-hide-bubbles" maskUnits="userSpaceOnUse">
+        <rect x="-10000" y="-10000" width="20000" height="20000" fill="white" />
+        {nodes.map((n) => (
+          <circle key={n.id} cx={n.x || 0} cy={n.y || 0} r={Math.max(1, rOf(n.area) - 1)} fill="black" />
+        ))}
+      </mask>
+    </defs>
+  );
+}
+
 export default function BubbleAdjacencyApp() {
+
   // Graph data
   const [nodes, setNodes] = useState([]);
   const [links, setLinks] = useState([]);
@@ -591,10 +591,9 @@ function updateFromList() {
     setSelectedNodeId(node.id);
     draggingRef.current = node.id;
     dragStartSnapshotRef.current = snapshot();
-    isDraggingRef.current = true;
-    try { e.currentTarget.setPointerCapture?.(e.pointerId); } catch {}
-    isDraggingRef.current = false;
-    simRef.current?.alphaTarget(0.3); // keep forces calm while dragging
+        isDraggingRef.current = true;
+try { e.currentTarget.setPointerCapture?.(e.pointerId); } catch {}
+    simRef.current?.alphaTarget(0.3);
   }
   function svgToLocalPoint(svgEl, clientX, clientY) {
     if (!svgEl) return { x: clientX, y: clientY };
@@ -612,72 +611,20 @@ function updateFromList() {
 function onPointerMove(e) {
   const id = draggingRef.current; if (!id) return;
   const svg = svgRef.current; const { x, y } = svgToLocalPoint(svg, e.clientX, e.clientY);
+  // Immediate visual update
   setNodes((prev) => prev.map((n) => (n.id === id ? { ...n, x, y, fx: x, fy: y } : n)));
+  // Keep the simulation node in sync so physics won't pull it away
   try {
     const sim = simRef.current;
     if (sim && sim.nodes) {
       const arr = sim.nodes();
       for (const n of arr) {
-        if (n.id === id) { n.x = x; n.y = y; n.fx = x; n.fy = y; n.vx = 0; n.vy = 0; break; }
+        if (n.id == id) { n.x = x; n.y = y; n.fx = x; n.fy = y; n.vx = 0; n.vy = 0; break; }
       }
     }
   } catch {}
 }
- = svgToLocalPoint(svg, e.clientX, e.clientY);
-    setNodes((prev) => prev.map((n) => (n.id === id ? { ...n, x, y, fx: x, fy: y } : n)));
-  }
-  function onPointerUp() {
-    const id = draggingRef.current; if (!id) return; draggingRef.current = null;
-    setNodes((prev) => prev.map((n) => (n.id === id ? { ...n, fx: undefined, fy: undefined } : n)));
-    if (dragStartSnapshotRef.current) historyRef.current.push(dragStartSnapshotRef.current);
-    dragStartSnapshotRef.current = null;
-    futureRef.current = [];
-    isDraggingRef.current = false;
-    simRef.current?.alphaTarget(0.3);
-  }
 
-  // ---------------------------- Node style setters ---------------------------
-  function renameNode(id, val) { pushHistory(); setNodes((p) => p.map((n) => (n.id === id ? { ...n, name: val } : n))); }
-  function changeArea(id, v) { pushHistory(); const a = toNumber(v, 1); setNodes((p) => p.map((n) => (n.id === id ? { ...n, area: Math.max(1, a) } : n))); }
-  function setNodeFill(id, colorOrNone) { pushHistory(); setNodes((p) => p.map((n) => (n.id === id ? { ...n, fill: colorOrNone } : n))); }
-  function setNodeStroke(id, color) { pushHistory(); setNodes((p) => p.map((n) => (n.id === id ? { ...n, stroke: color } : n))); }
-  function setNodeStrokeW(id, w) { pushHistory(); const width = Math.max(1, Math.min(12, toNumber(w, 2))); setNodes((p) => p.map((n) => (n.id === id ? { ...n, strokeWidth: width } : n))); }
-  function setNodeTextColor(id, c) { pushHistory(); setNodes((p) => p.map((n) => (n.id === id ? { ...n, textColor: c } : n))); }
-  function setNodeTextSize(id, s) { pushHistory(); setNodes((p) => p.map((n) => (n.id === id ? { ...n, textSize: clampTextSize(s) } : n))); }
-  function setNodeTextFont(id, f) { pushHistory(); setNodes((p) => p.map((n) => (n.id === id ? { ...n, textFont: f } : n))); }
-
-  // ---------------------------- Keyboard Shortcuts ---------------------------
-  const lastClickedLinkRef = useRef(null);
-  useEffect(() => {
-    const onKey = (e) => {
-      if (e.ctrlKey || e.metaKey) {
-        const k = e.key.toLowerCase();
-        if (k === "z") { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
-        if (k === "y") { e.preventDefault(); redo(); return; }
-        if (k === "s") { e.preventDefault(); saveJSON(); return; }
-      }
-      if (e.key === "Delete" || e.key === "Backspace") {
-        const id = lastClickedLinkRef.current; if (!id) return;
-        pushHistory();
-        setLinks((p) => p.filter((l) => l.id !== id));
-        lastClickedLinkRef.current = null;
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-
-  
-// ---------------------------- Scenes API ------------------------------------
-function captureScenePayload() {
-  const pos = {};
-  for (const n of nodes) pos[n.id] = { x: n.x || 0, y: n.y || 0 };
-  return {
-    positions: pos,
-    zoom: { k: zoomTransform.k, x: zoomTransform.x, y: zoomTransform.y },
-    updatedAt: Date.now(),
-  };
-}
 function addScene(name) {
   const nm = String(name || "").trim() || `Scene ${scenes.length + 1}`;
   const payload = captureScenePayload();
@@ -1367,8 +1314,7 @@ VOD Review / Theater, 60`} value={rawList} onChange={(e) => setRawList(e.target.
             <LinkMask nodes={nodes} rOf={rOf} />
             <g id="zoomable" transform={zoomTransform.toString()}>
               {/* Links */}
-              <g mask="url(#mask-links-hide-bubbles)">
-              {links.map((l) => {
+              <g mask="url(#mask-links-hide-bubbles)">{links.map((l) => {
                 const s = nodes.find((n) => n.id === l.source); const t = nodes.find((n) => n.id === l.target);
                 if (!s || !t) return null;
                 const dx = (t.x - s.x), dy = (t.y - s.y); const dist = Math.hypot(dx, dy) || 1; const nx = dx / dist, ny = dy / dist;
@@ -1389,7 +1335,7 @@ VOD Review / Theater, 60`} value={rawList} onChange={(e) => setRawList(e.target.
                     <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={st.color} strokeWidth={st.width} strokeDasharray={dashFor(l.type)} markerStart={markerUrl(l.type, "start")} markerEnd={markerUrl(l.type, "end")} opacity={0.98} />
                   </g>
                 );
-              })}
+              })}</g>
               {/* Nodes */}
               {nodes.map((n) => {
                 const r = rOf(n.area);
