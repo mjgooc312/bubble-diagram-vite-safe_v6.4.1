@@ -1,4 +1,16 @@
 
+          {/* Quick-jump sticky nav */}
+          <div className="sticky top-0 z-10 -mx-4 px-4 py-2 bg-[#0b0b12]/95 backdrop-blur border-b border-[#2a2a3a]">
+            <div className="flex flex-wrap gap-2 text-xs">
+              {["modes","bubbles","bg","spacing","physics","exp"].map((t)=>(
+                <button key={t} onClick={()=>jumpTo(t)}
+                  className="px-3 py-1.5 rounded-full border border-white/10 hover:bg-white/5">
+                  {t==="modes"?"Modes":t==="bubbles"?"Bubbles":t==="bg"?"Backgrounds":t==="spacing"?"Spacing":t==="physics"?"Physics/Scenes":"Export"}
+                </button>
+              ))}
+            </div>
+          </div>
+
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as d3 from "d3";
 // App version & changelog banner (top-level)
@@ -266,26 +278,6 @@ export default function BubbleAdjacencyApp() {
   // Right panel (D5-style) toggle
   const [panelOpen, setPanelOpen] = useState(true);
   const [leftPanelOpen, setLeftPanelOpen] = useState(true);
-  // Right panel width (resizable) and tabs
-  const [panelWidth, setPanelWidth] = useState(420);
-  const [panelTab, setPanelTab] = useState("modes"); // modes|bubbles|bg|spacing|physics|export
-  const startResize = (e) => {
-    e.preventDefault();
-    const startX = e.clientX;
-    const startW = panelWidth;
-    const onMove = (ev) => {
-      const dx = startX - ev.clientX; // dragging leftwards increases width (from right edge inward)
-      const w = Math.min(560, Math.max(340, startW + dx));
-      setPanelWidth(w);
-    };
-    const onUp = () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-  };
-
 
   // Changelog banner show-once per version
   const [showChangelog, setShowChangelog] = useState(false);
@@ -1174,8 +1166,8 @@ function zeroVelocities() {
         </div>
       )}
 {/* Right Panel */}
-            <div className={panelOpen ? "fixed right-0 top-0 z-30 h-screen w-[420px] overflow-y-auto overflow-x-hidden border-l panel-scroll border-[#2a2a3a] bg-[#0b0b12]" : "fixed right-0 top-0 z-20 h-screen w-[56px] overflow-y-auto border-l border-[#2a2a3a] bg-[#0b0b12]"} data-aside="true" style={{ width: panelOpen ? panelWidth : 56 }}>
-        <div className="px-4 py-5 pb-32 grid grid-cols-1 gap-4 min-w-0">
+            <div className={panelOpen ? "fixed right-0 top-0 z-30 h-screen w-[420px] overflow-y-auto overflow-x-hidden border-l panel-scroll border-[#2a2a3a] bg-[#0b0b12]" : "fixed right-0 top-0 z-20 h-screen w-[56px] overflow-y-auto border-l border-[#2a2a3a] bg-[#0b0b12]"} data-aside="true">
+        <div className="px-4 py-5 pb-24 grid grid-cols-1 gap-4 min-w-0">
           {/* Panel toggle */}
           <button
             className="absolute left-[-28px] top-4 h-8 w-8 rounded-full border border-[#2a2a3a] bg-[#0b0b12] hover:bg-white/5 text-xs"
@@ -1311,7 +1303,7 @@ function zeroVelocities() {
               <span className="opacity-70">%</span>
             </div>
             {/* Measurements toggle */}
-            {panelTab==="physics" && (<div className="col-span-2 md:col-span-6 lg:col-span-4 flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs w-full">
+            <div className="col-span-2 md:col-span-6 lg:col-span-4 flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs w-full" ref={sectionRefs.physics}>
               <label className="flex items-center gap-1">
                 <input type="checkbox" checked={showMeasurements} onChange={(e) => setShowMeasurements(e.target.checked)} />
                 show m² labels
@@ -1321,7 +1313,7 @@ function zeroVelocities() {
 
             {/* Graph actions */}
             <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={() => setPhysics((p) => !p)}>{physics ? "Physics: ON" : "Physics: OFF"}</button>
-            <button className="px-3 py-2 )}rounded-xl border border-[#2a2a3a] text-sm" onClick={() => setNodes([...nodes])}>Re-Layout</button>
+            <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={() => setNodes([...nodes])}>Re-Layout</button>
 
             
 {/* Scenes */}
@@ -1369,7 +1361,7 @@ function zeroVelocities() {
       
 {/* Left Panel */}
             <div className={leftPanelOpen ? "fixed left-0 top-0 z-30 h-screen w-[420px] overflow-y-auto overflow-x-hidden border-r panel-scroll border-[#2a2a3a] bg-[#0b0b12]" : "fixed left-0 top-0 z-30 h-screen w-[56px] overflow-y-auto overflow-x-hidden border-r panel-scroll border-[#2a2a3a] bg-[#0b0b12]"}>
-              <div className="px-4 py-5 pb-32 grid grid-cols-1 gap-4 min-w-0">
+              <div className="px-4 py-5 pb-24 grid grid-cols-1 gap-4 min-w-0">
                 {/* Panel toggle */}
                 <button
                   className="absolute right-[-28px] top-4 h-8 w-8 rounded-full border border-[#2a2a3a] bg-[#0b0b12] hover:bg-white/5 text-xs"
