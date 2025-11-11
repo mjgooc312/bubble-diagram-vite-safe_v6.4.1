@@ -1,18 +1,14 @@
-
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as d3 from "d3";
 
 /**
  * Bubble Diagram Builder – Force-directed (React + D3)
- * v4.3 — Arrow overlap + Rotation sensitivity + Rounded color pickers
+ * v4.4 — Detangle pulse + Connect-mode click fix
  *
- * What’s new vs your uploaded file:
- *  • Arrow overlap slider: lets link lines/arrowheads extend inside the bubbles.
- *  • Rotation sensitivity slider: adds a gentle tangential “spin” force so bubbles orbit/settle based on sensitivity.
- *  • Color inputs styled as smooth rounded pills (no sharp corners).
- *  • Presets persist arrowOverlap and rotationSensitivity along with the rest.
- *
- * Drop this into your Vite React app (e.g., src/BubbleAdjacencyApp.jsx) and render it.
+ * • New: “De-tangle (explode→shrink)” button that temporarily increases spacing/repulsion
+ *   to separate connected bubbles, then eases back.
+ * • Fix: In Connect mode, text editors no longer block clicks; dragging is disabled
+ *   while connecting so a line always forms on the second click.
  */
 
 // ---- Theme (UI chrome only; not the canvas background) ----------------------
@@ -64,7 +60,6 @@ function toNumber(v, fallback) {
 function norm(s){
   return String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
 }
-
 
 /** Clamp text size into safe range and coerce to number */
 function clampTextSize(v) {
@@ -153,7 +148,8 @@ function MarkerDefs({ styles }) {
           {shape === "diamond" && (
             <polygon
               points="3.5 0, 7 3.5, 3.5 7, 0 3.5"
-              transform={kind === "end" ? "translate(3,0)" : "translate(1,0)"}
+              transform={kind === "end" ? "translate(3,0)" : "translate(1,0)"
+              }
               fill={st.color}
             />
           )}
@@ -214,30 +210,34 @@ export default function BubbleAdjacencyApp() {
   // Buffer between bubbles
   const [buffer, setBuffer] = useState(6);
 
-  // NEW: arrows can overlap into the circles — in pixels
+  // arrows can overlap into the circles — in pixels
   const [arrowOverlap, setArrowOverlap] = useState(0); // 0..40+
 
-  // NEW: rotation sensitivity (adds a light "spin" force)
+  // rotation sensitivity (adds a light "spin" force)
   const [rotationSensitivity, setRotationSensitivity] = useState(0); // 0..100
   const [showMeasurements, setShowMeasurements] = useState(true);
 
-// --- Scenes (positions + zoom) ---
-const SCENES_KEY = "bubbleScenes:v1";
-const [scenes, setScenes] = useState(() => {
-  try { return JSON.parse(localStorage.getItem(SCENES_KEY) || "[]"); }
-  catch { return []; }
-});
-const [activeSceneId, setActiveSceneId] = useState(null);
-useEffect(() => {
-  try { localStorage.setItem(SCENES_KEY, JSON.stringify(scenes)); } catch {}
-}, [scenes]);
+  // NEW: detangle pulse (explode → shrink)
+  const [explodeFactor, setExplodeFactor] = useState(1); // 1 = normal, >1 = expanded
+  const explodeTORef = useRef(null);
+
+  // --- Scenes (positions + zoom) ---
+  const SCENES_KEY = "bubbleScenes:v1";
+  const [scenes, setScenes] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(SCENES_KEY) || "[]"); }
+    catch { return []; }
+  });
+  const [activeSceneId, setActiveSceneId] = useState(null);
+  useEffect(() => {
+    try { localStorage.setItem(SCENES_KEY, JSON.stringify(scenes)); } catch {}
+  }, [scenes]);
   const [updateAreasFromList, setUpdateAreasFromList] = useState(false);
-  const [updateMatchMode, setUpdateMatchMode] = useState("name"); // "name" | "index" // update areas too when applying list
+  const [updateMatchMode, setUpdateMatchMode] = useState("name"); // "name" | "index"
 
   // Edge style presets (necessary vs ideal)
   const [styles, setStyles] = useState({
     necessary: { color: "#8b5cf6", dashed: false, width: 3, headStart: "arrow", headEnd: "arrow" },
-    ideal: { color: "#facc15", dashed: true, width: 3, headStart: "arrow", headEnd: "arrow" },
+    ideal:     { color: "#facc15", dashed: true,  width: 3, headStart: "arrow", headEnd: "arrow" },
   });
 
   // Export background (used for exported image files)
@@ -263,7 +263,6 @@ useEffect(() => {
   const containerRef = useRef(null);
   // File handle for JSON (File System Access API)
   const jsonHandleRef = useRef(null);
-
 
   // Zoom / Pan
   const zoomBehaviorRef = useRef(null);
@@ -304,7 +303,6 @@ useEffect(() => {
   }
 
   // ---------------------------- Preset Persistence ---------------------------
-  // Load on mount
   useEffect(() => {
     const p = loadPresets();
     if (!p) return;
@@ -328,7 +326,6 @@ useEffect(() => {
     if (p.liveBgCustom) setLiveBgCustom(p.liveBgCustom);
   }, []);
 
-  // Save whenever any preset changes
   useEffect(() => {
     const payload = {
       styles,
@@ -355,7 +352,8 @@ useEffect(() => {
     bulkFill, bulkFillTransparent, bulkStroke, bulkStrokeWidth,
     bulkTextFont, bulkTextColor, bulkTextSize,
     exportBgMode, exportBgCustom,
-    liveBgMode, liveBgCustom
+    liveBgMode, liveBgCustom,
+    scenes, activeSceneId
   ]);
 
   // ---------------------------- D3 Force Simulation --------------------------
@@ -367,7 +365,7 @@ useEffect(() => {
       .force("charge", d3.forceManyBody().strength(-80))
       .force("collide", d3.forceCollide().radius((d) => (d.r || BASE_R_MIN) + buffer))
       .force("center", d3.forceCenter(0, 0))
-      .force("spin", makeSpinForce(rotationSensitivity)); // NEW
+      .force("spin", makeSpinForce(rotationSensitivity));
     simRef.current = sim;
     return () => sim.stop();
   }, []);
@@ -379,6 +377,22 @@ useEffect(() => {
     sim.force("spin", makeSpinForce(rotationSensitivity));
     if (physics && rotationSensitivity > 0) sim.alpha(0.5).restart();
   }, [rotationSensitivity, physics]);
+
+  // Update charge & collide strength when explodeFactor changes (detangle pulse)
+  useEffect(() => {
+    const sim = simRef.current; if (!sim) return;
+    const baseCharge = -80;
+    const mult = explodeFactor > 1 ? 1.8 * explodeFactor : 1;
+    const charge = sim.force("charge");
+    charge && charge.strength(baseCharge * mult);
+
+    // also refresh collide with extra cushion
+    sim.force("collide", d3.forceCollide()
+      .radius((d) => (d.r || BASE_R_MIN) + buffer + Math.max(0, (explodeFactor - 1) * 18))
+    );
+
+    if (physics) sim.alpha(0.7).restart();
+  }, [explodeFactor, buffer, physics]);
 
   const rafRef = useRef(null);
   useEffect(() => {
@@ -392,12 +406,15 @@ useEffect(() => {
       .distance((l) => {
         const base = (l.source.r || BASE_R_MIN) + (l.target.r || BASE_R_MIN);
         const k = l.type === "necessary" ? 1.1 : 1.0;
-        return base * 1.05 * k + 40 + buffer * 1.5;
+        const d0 = base * 1.05 * k + 40 + buffer * 1.5;
+        return d0 * (explodeFactor || 1); // expand when detangling
       })
       .strength((l) => (l.type === "necessary" ? 0.5 : 0.25));
 
     sim.nodes(nn);
-    sim.force("collide", d3.forceCollide().radius((d) => (d.r || BASE_R_MIN) + buffer));
+    sim.force("collide", d3.forceCollide()
+      .radius((d) => (d.r || BASE_R_MIN) + buffer + Math.max(0, (explodeFactor - 1) * 18))
+    );
     sim.force("link", linkForce);
     sim.force("x", d3.forceX().strength(0.03));
     sim.force("y", d3.forceY().strength(0.03));
@@ -416,7 +433,7 @@ useEffect(() => {
       sim.on("tick", null);
       if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
     };
-  }, [nodes.length, links, physics, rOf, buffer]);
+  }, [nodes.length, links, physics, rOf, buffer, explodeFactor]);
 
   // ---------------------------- Generate / Edit -------------------------------
   function onGenerate() {
@@ -441,76 +458,30 @@ useEffect(() => {
     setLinkSource(null);
     setPhysics(true);
     setSelectedNodeId(null);
-    // Reset zoom to identity so fresh graph starts centered
     resetZoom();
   }
-  
-function updateFromList() {
-  if (!nodes.length) return;
-  const parsed = parseList(rawList || "");
-  if (!parsed.length) return;
-  pushHistory();
 
-  if (updateMatchMode === "index") {
-    setNodes((prev) => prev.map((n, i) => {
-      if (i >= parsed.length) return n;
-      const src = parsed[i];
-      return {
-        ...n,
-        name: src.name,
-        ...(updateAreasFromList ? { area: Math.max(1, +src.area || n.area) } : {}),
-      };
-    }));
-    if (parsed.length > nodes.length) {
-      const extras = parsed.slice(nodes.length).map((x) => ({
-        id: Math.random().toString(36).slice(2, 9),
-        name: x.name,
-        area: Math.max(1, +x.area || 20),
-        x: (Math.random() - 0.5) * 40,
-        y: (Math.random() - 0.5) * 40,
-        fill: bulkFillTransparent ? "none" : bulkFill,
-        stroke: bulkStroke,
-        strokeWidth: bulkStrokeWidth,
-        textFont: bulkTextFont,
-        textColor: bulkTextColor,
-        textSize: clampTextSize(bulkTextSize),
-      }));
-      setNodes((prev) => [...prev, ...extras]);
-    }
-    return;
-  }
+  function updateFromList() {
+    if (!nodes.length) return;
+    const parsed = parseList(rawList || "");
+    if (!parsed.length) return;
+    pushHistory();
 
-  // default: match by NAME (safer after JSON imports that reorder nodes)
-  setNodes((prev) => {
-    const buckets = new Map();
-    prev.forEach((n, idx) => {
-      const k = norm(n.name);
-      const arr = buckets.get(k) || [];
-      arr.push(idx);
-      buckets.set(k, arr);
-    });
-
-    const updated = [...prev];
-    const used = new Set();
-    const extras = [];
-
-    parsed.forEach((src) => {
-      const key = norm(src.name);
-      const arr = buckets.get(key);
-      let idx = -1;
-      if (arr && arr.length) idx = arr.shift();
-      if (idx >= 0 && !used.has(idx)) {
-        updated[idx] = {
-          ...updated[idx],
+    if (updateMatchMode === "index") {
+      setNodes((prev) => prev.map((n, i) => {
+        if (i >= parsed.length) return n;
+        const src = parsed[i];
+        return {
+          ...n,
           name: src.name,
-          ...(updateAreasFromList ? { area: Math.max(1, +src.area || updated[idx].area) } : {}),
+          ...(updateAreasFromList ? { area: Math.max(1, +src.area || n.area) } : {}),
         };
-        used.add(idx);
-      } else {
-        extras.push({
+      }));
+      if (parsed.length > nodes.length) {
+        const extras = parsed.slice(nodes.length).map((x) => ({
           id: Math.random().toString(36).slice(2, 9),
-          name: src.name,
-          area: Math.max(1, +src.area || 20),
+          name: x.name,
+          area: Math.max(1, +x.area || 20),
           x: (Math.random() - 0.5) * 40,
           y: (Math.random() - 0.5) * 40,
           fill: bulkFillTransparent ? "none" : bulkFill,
@@ -519,14 +490,57 @@ function updateFromList() {
           textFont: bulkTextFont,
           textColor: bulkTextColor,
           textSize: clampTextSize(bulkTextSize),
-        });
+        }));
+        setNodes((prev) => [...prev, ...extras]);
       }
+      return;
+    }
+
+    // default: match by NAME
+    setNodes((prev) => {
+      const buckets = new Map();
+      prev.forEach((n, idx) => {
+        const k = norm(n.name);
+        const arr = buckets.get(k) || [];
+        arr.push(idx);
+        buckets.set(k, arr);
+      });
+
+      const updated = [...prev];
+      const used = new Set();
+      const extras = [];
+
+      parsed.forEach((src) => {
+        const key = norm(src.name);
+        const arr = buckets.get(key);
+        let idx = -1;
+        if (arr && arr.length) idx = arr.shift();
+        if (idx >= 0 && !used.has(idx)) {
+          updated[idx] = {
+            ...updated[idx],
+            name: src.name,
+            ...(updateAreasFromList ? { area: Math.max(1, +src.area || updated[idx].area) } : {}),
+          };
+          used.add(idx);
+        } else {
+          extras.push({
+            id: Math.random().toString(36).slice(2, 9),
+            name: src.name,
+            area: Math.max(1, +src.area || 20),
+            x: (Math.random() - 0.5) * 40,
+            y: (Math.random() - 0.5) * 40,
+            fill: bulkFillTransparent ? "none" : bulkFill,
+            stroke: bulkStroke,
+            strokeWidth: bulkStrokeWidth,
+            textFont: bulkTextFont,
+            textColor: bulkTextColor,
+            textSize: clampTextSize(bulkTextSize),
+          });
+        }
+      });
+      return extras.length ? [...updated, ...extras] : updated;
     });
-    return extras.length ? [...updated, ...extras] : updated;
-  });
-}
-
-
+  }
 
   function clearAll() {
     pushHistory();
@@ -571,6 +585,10 @@ function updateFromList() {
   function onPointerDownNode(e, node) {
     e.stopPropagation();
     setSelectedNodeId(node.id);
+
+    // IMPORTANT: do not start drag while in Connect mode (fix for missed links)
+    if (mode === "connect") return;
+
     draggingRef.current = node.id;
     dragStartSnapshotRef.current = snapshot();
     try { e.currentTarget.setPointerCapture?.(e.pointerId); } catch {}
@@ -633,59 +651,58 @@ function updateFromList() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  
-// ---------------------------- Scenes API ------------------------------------
-function captureScenePayload() {
-  const pos = {};
-  for (const n of nodes) pos[n.id] = { x: n.x || 0, y: n.y || 0 };
-  return {
-    positions: pos,
-    zoom: { k: zoomTransform.k, x: zoomTransform.x, y: zoomTransform.y },
-    updatedAt: Date.now(),
-  };
-}
-function addScene(name) {
-  const nm = String(name || "").trim() || `Scene ${scenes.length + 1}`;
-  const payload = captureScenePayload();
-  const s = { id: Math.random().toString(36).slice(2,9), name: nm, ...payload };
-  setScenes(prev => [...prev, s]);
-  setActiveSceneId(s.id);
-}
-function applyScene(sceneId) {
-  const s = scenes.find(x => x.id === sceneId);
-  if (!s) return;
-  const { positions, zoom } = s;
-  setNodes(prev => prev.map(n => {
-    const p = positions[n.id];
-    return p ? { ...n, x: p.x, y: p.y, fx: undefined, fy: undefined } : n;
-  }));
-  try {
-    const svg = d3.select(svgRef.current);
-    const zoomer = zoomBehaviorRef.current;
-    if (svg && zoomer && zoom) {
-      svg.transition().duration(250)
-         .call(zoomer.transform, d3.zoomIdentity.translate(zoom.x, zoom.y).scale(zoom.k || 1));
-    }
-  } catch {}
-  zeroVelocities();
-  simRef.current?.alpha(0.3).restart();
-}
-function updateScene(sceneId) {
-  const idx = scenes.findIndex(x => x.id === sceneId);
-  if (idx === -1) return;
-  const payload = captureScenePayload();
-  setScenes(prev => {
-    const next = [...prev];
-    next[idx] = { ...next[idx], ...payload };
-    return next;
-  });
-}
-function deleteScene(sceneId) {
-  setScenes(prev => prev.filter(x => x.id !== sceneId));
-  if (activeSceneId === sceneId) setActiveSceneId(null);
-}
+  // ---------------------------- Scenes API -----------------------------------
+  function captureScenePayload() {
+    const pos = {};
+    for (const n of nodes) pos[n.id] = { x: n.x || 0, y: n.y || 0 };
+    return {
+      positions: pos,
+      zoom: { k: zoomTransform.k, x: zoomTransform.x, y: zoomTransform.y },
+      updatedAt: Date.now(),
+    };
+  }
+  function addScene(name) {
+    const nm = String(name || "").trim() || `Scene ${scenes.length + 1}`;
+    const payload = captureScenePayload();
+    const s = { id: Math.random().toString(36).slice(2,9), name: nm, ...payload };
+    setScenes(prev => [...prev, s]);
+    setActiveSceneId(s.id);
+  }
+  function applyScene(sceneId) {
+    const s = scenes.find(x => x.id === sceneId);
+    if (!s) return;
+    const { positions, zoom } = s;
+    setNodes(prev => prev.map(n => {
+      const p = positions[n.id];
+      return p ? { ...n, x: p.x, y: p.y, fx: undefined, fy: undefined } : n;
+    }));
+    try {
+      const svg = d3.select(svgRef.current);
+      const zoomer = zoomBehaviorRef.current;
+      if (svg && zoomer && zoom) {
+        svg.transition().duration(250)
+           .call(zoomer.transform, d3.zoomIdentity.translate(zoom.x, zoom.y).scale(zoom.k || 1));
+      }
+    } catch {}
+    zeroVelocities();
+    simRef.current?.alpha(0.3).restart();
+  }
+  function updateScene(sceneId) {
+    const idx = scenes.findIndex(x => x.id === sceneId);
+    if (idx === -1) return;
+    const payload = captureScenePayload();
+    setScenes(prev => {
+      const next = [...prev];
+      next[idx] = { ...next[idx], ...payload };
+      return next;
+    });
+  }
+  function deleteScene(sceneId) {
+    setScenes(prev => prev.filter(x => x.id !== sceneId));
+    if (activeSceneId === sceneId) setActiveSceneId(null);
+  }
 
-// ---------------------------- Export helpers -------------------------------
+  // ---------------------------- Export helpers -------------------------------
   function getExportBg() {
     if (exportBgMode === "transparent") return null;
     if (exportBgMode === "white") return "#ffffff";
@@ -741,7 +758,6 @@ function deleteScene(sceneId) {
     img.src = `data:image/svg+xml;base64,${svg64}`;
   }
 
-  
   function buildExportPayload() {
     return {
       nodes, links, styles,
@@ -763,32 +779,7 @@ function deleteScene(sceneId) {
     };
   }
 
-  function exportJSON() {
-    const blob = new Blob(
-      [JSON.stringify({
-        nodes, links, styles,
-        bulk: {
-          bulkFill,
-          bulkFillTransparent,
-          bulkStroke,
-          bulkStrokeWidth,
-          bulkTextFont,
-          bulkTextColor,
-          bulkTextSize: clampTextSize(bulkTextSize),
-        },
-        buffer,
-        arrowOverlap,
-        rotationSensitivity,
-        exportBgMode, exportBgCustom,
-        liveBgMode, liveBgCustom,
-      }, null, 2)],
-      { type: "application/json" }
-    );
-    const url = URL.createObjectURL(blob); download(url, `bubble-diagram-${Date.now()}.json`);
-  }
-  // ---- File System Access API helpers (progressive enhancement) -------------
   async function saveJSON() {
-    // Save to the same file if we have a handle; otherwise fall back to Save As
     if (window.showSaveFilePicker && jsonHandleRef.current) {
       try {
         const handle = jsonHandleRef.current;
@@ -800,7 +791,6 @@ function deleteScene(sceneId) {
         console.warn("Save JSON failed, falling back to Save As…", err);
       }
     }
-    // Fallback
     return saveJSONAs();
   }
 
@@ -823,7 +813,6 @@ function deleteScene(sceneId) {
         console.warn("Save As cancelled or failed; using download() fallback.", err);
       }
     }
-    // Fallback: simple download with a prompt for the filename
     let name = typeof window !== "undefined" ? (window.prompt("File name", "bubble-diagram.json") || "bubble-diagram.json") : "bubble-diagram.json";
     const blob = new Blob([JSON.stringify(buildExportPayload(), null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -850,14 +839,13 @@ function deleteScene(sceneId) {
         console.warn("Open JSON cancelled or failed.", err);
       }
     }
-    // Fallback: trigger the hidden file input (existing Import JSON)
     const input = document.createElement("input");
     input.type = "file";
     input.accept = "application/json";
     input.onchange = (e) => {
       const file = e.target.files?.[0];
       if (!file) return;
-      jsonHandleRef.current = null; // file input doesn't grant a persistent handle
+      jsonHandleRef.current = null;
       const r = new FileReader();
       r.onload = () => parseAndLoadJSON(String(r.result || ""));
       r.readAsText(file);
@@ -904,7 +892,6 @@ function deleteScene(sceneId) {
     }
   }
 
-
   function importJSON(file) {
     const r = new FileReader();
     r.onload = () => {
@@ -947,19 +934,34 @@ function deleteScene(sceneId) {
     r.readAsText(file);
   }
 
-  
-function zeroVelocities() {
-  try {
-    const sim = simRef.current;
-    if (!sim) return;
-    const arr = sim.nodes ? sim.nodes() : [];
-    if (Array.isArray(arr)) {
-      for (const n of arr) { n.vx = 0; n.vy = 0; }
-    }
-  } catch {}
-}
+  function zeroVelocities() {
+    try {
+      const sim = simRef.current;
+      if (!sim) return;
+      const arr = sim.nodes ? sim.nodes() : [];
+      if (Array.isArray(arr)) {
+        for (const n of arr) { n.vx = 0; n.vy = 0; }
+      }
+    } catch {}
+  }
 
-// ---------------------------- Zoom / Pan / Fit -----------------------------
+  // ---------------------------- Detangle pulse -------------------------------
+  function detanglePulse() {
+    // bump expansion
+    if (explodeTORef.current) clearTimeout(explodeTORef.current);
+    setExplodeFactor(2.2);
+    simRef.current?.alpha(1).restart();
+    // ease back after a short delay
+    explodeTORef.current = setTimeout(() => {
+      setExplodeFactor(1);
+      simRef.current?.alpha(0.6).restart();
+    }, 1200);
+  }
+  useEffect(() => {
+    return () => { if (explodeTORef.current) clearTimeout(explodeTORef.current); };
+  }, []);
+
+  // ---------------------------- Zoom / Pan / Fit -----------------------------
   useEffect(() => {
     const svg = d3.select(svgRef.current);
     const zoom = d3.zoom()
@@ -969,8 +971,7 @@ function zeroVelocities() {
       });
     zoomBehaviorRef.current = zoom;
     svg.call(zoom);
-    // Double-click to reset zoom
-    svg.on("dblclick.zoom", null); // disable default dblclick zoom
+    svg.on("dblclick.zoom", null);
     svg.on("dblclick", () => resetZoom());
     return () => svg.on(".zoom", null);
   }, []);
@@ -992,7 +993,6 @@ function zeroVelocities() {
   }
   function fitToView() {
     if (!nodes.length) return resetZoom();
-    // Compute bounds from node centers + radii
     const r = (n) => rOf(n.area);
     const minX = d3.min(nodes, (n) => (n.x || 0) - r(n)) ?? -600;
     const maxX = d3.max(nodes, (n) => (n.x || 0) + r(n)) ?? 600;
@@ -1058,20 +1058,14 @@ function zeroVelocities() {
           appearance: none;
           border: 1px solid ${THEME.border};
           width: 32px; height: 28px;
-          border-radius: 9999px; /* smooth, no sharp corners */
+          border-radius: 9999px;
           padding: 0;
           background: transparent;
           cursor: pointer;
         }
-        input[type="color"]::-webkit-color-swatch-wrapper {
-          padding: 0; border-radius: 9999px;
-        }
-        input[type="color"]::-webkit-color-swatch {
-          border: none; border-radius: 9999px;
-        }
-        input[type="color"]::-moz-color-swatch {
-          border: none; border-radius: 9999px;
-        }
+        input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; border-radius: 9999px; }
+        input[type="color"]::-webkit-color-swatch { border: none; border-radius: 9999px; }
+        input[type="color"]::-moz-color-swatch { border: none; border-radius: 9999px; }
       `}</style>
 
       {/* Toolbar */}
@@ -1172,7 +1166,7 @@ function zeroVelocities() {
               <span className="opacity-70">px</span>
             </div>
 
-            {/* NEW: Arrow Overlap */}
+            {/* Arrow Overlap */}
             <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
               <span className="opacity-70">Arrow overlap:</span>
               <input type="range" min={0} max={60} step={1} value={arrowOverlap} onChange={(e) => setArrowOverlap(+e.target.value)} />
@@ -1180,13 +1174,14 @@ function zeroVelocities() {
               <span className="opacity-70">px</span>
             </div>
 
-            {/* NEW: Rotation Sensitivity */}
+            {/* Rotation Sensitivity */}
             <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
               <span className="opacity-70">Rotation sensitivity:</span>
               <input type="range" min={0} max={100} step={1} value={rotationSensitivity} onChange={(e) => setRotationSensitivity(+e.target.value)} />
               <input type="number" min={0} max={100} value={rotationSensitivity} className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" onChange={(e) => setRotationSensitivity(Math.max(0, Math.min(100, +e.target.value || 0)))} />
               <span className="opacity-70">%</span>
             </div>
+
             {/* Measurements toggle */}
             <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
               <label className="flex items-center gap-1">
@@ -1195,29 +1190,32 @@ function zeroVelocities() {
               </label>
             </div>
 
-
             {/* Graph actions */}
             <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={() => setPhysics((p) => !p)}>{physics ? "Physics: ON" : "Physics: OFF"}</button>
             <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={() => setNodes([...nodes])}>Re-Layout</button>
 
-            
-{/* Scenes */}
-<div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-2 py-2 text-xs">
-  <span className="opacity-70">Scene:</span>
-  <select className="bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
-          value={activeSceneId || ""}
-          onChange={(e) => setActiveSceneId(e.target.value || null)}>
-    <option value="">(none)</option>
-    {scenes.map((s) => (<option key={s.id} value={s.id}>{s.name}</option>))}
-  </select>
-  <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" onClick={() => {
-    const nm = window.prompt("New scene name", `Scene ${scenes.length + 1}`);
-    if (nm != null) addScene(nm);
-  }}>Add</button>
-  <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" disabled={!activeSceneId} onClick={() => activeSceneId && applyScene(activeSceneId)}>Go</button>
-  <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" disabled={!activeSceneId} onClick={() => activeSceneId && updateScene(activeSceneId)}>Update</button>
-  <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" disabled={!activeSceneId} onClick={() => activeSceneId && deleteScene(activeSceneId)}>Delete</button>
-</div>
+            {/* NEW: De-tangle pulse */}
+            <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={detanglePulse}>
+              De-tangle (explode→shrink)
+            </button>
+
+            {/* Scenes */}
+            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-2 py-2 text-xs">
+              <span className="opacity-70">Scene:</span>
+              <select className="bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
+                      value={activeSceneId || ""}
+                      onChange={(e) => setActiveSceneId(e.target.value || null)}>
+                <option value="">(none)</option>
+                {scenes.map((s) => (<option key={s.id} value={s.id}>{s.name}</option>))}
+              </select>
+              <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" onClick={() => {
+                const nm = window.prompt("New scene name", `Scene ${scenes.length + 1}`);
+                if (nm != null) addScene(nm);
+              }}>Add</button>
+              <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" disabled={!activeSceneId} onClick={() => activeSceneId && applyScene(activeSceneId)}>Go</button>
+              <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" disabled={!activeSceneId} onClick={() => activeSceneId && updateScene(activeSceneId)}>Update</button>
+              <button className="px-2 py-1 rounded-md border border-[#2a2a3a]" disabled={!activeSceneId} onClick={() => activeSceneId && deleteScene(activeSceneId)}>Delete</button>
+            </div>
 
             {/* Zoom controls */}
             <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-2 py-2 text-xs">
@@ -1338,7 +1336,7 @@ VOD Review / Theater, 60`} value={rawList} onChange={(e) => setRawList(e.target.
                 const dx = (t.x - s.x), dy = (t.y - s.y); const dist = Math.hypot(dx, dy) || 1; const nx = dx / dist, ny = dy / dist;
                 const rs = rOf(s.area), rt = rOf(t.area);
 
-                // NEW: let arrow/line start & end move inside the circle by `arrowOverlap` (clamped per radius)
+                // let arrow/line start & end move inside the circle by `arrowOverlap` (clamped per radius)
                 const insetS = Math.max(0, Math.min(arrowOverlap, rs - 2));
                 const insetT = Math.max(0, Math.min(arrowOverlap, rt - 6));
 
@@ -1375,7 +1373,7 @@ VOD Review / Theater, 60`} value={rawList} onChange={(e) => setRawList(e.target.
                   >
                     <circle r={r} fill={n.fill ?? (bulkFillTransparent ? "none" : bulkFill)} stroke={hi ? styles.necessary.color : (n.stroke || bulkStroke)} strokeWidth={n.strokeWidth ?? bulkStrokeWidth} />
                     <circle r={r - 2} fill="none" stroke="#2c2c3c" strokeWidth={1} />
-                    
+
                     <text textAnchor="middle" dominantBaseline="middle" className="select-none"
                           style={{ fill: labelColor, fontSize: labelSize, fontWeight: 600, letterSpacing: 0.4, fontFamily: labelFont }}>
                       {(() => {
@@ -1392,20 +1390,16 @@ VOD Review / Theater, 60`} value={rawList} onChange={(e) => setRawList(e.target.
                     </text>
 
                     {showMeasurements && (
-
-
-                    
-
-                    <text y={r - 18} textAnchor="middle" style={{ fill: THEME.subtle, fontSize: areaSize, fontFamily: labelFont }}>
-                      {n.area} m²
-                    </text>
-
-
+                      <text y={r - 18} textAnchor="middle" style={{ fill: THEME.subtle, fontSize: areaSize, fontFamily: labelFont }}>
+                        {n.area} m²
+                      </text>
                     )}
-                    <foreignObject x={-r} y={-18} width={r * 2} height={36} data-ignore-export>
+
+                    {/* IMPORTANT: disable editor hitboxes while connecting so clicks create links */}
+                    <foreignObject x={-r} y={-18} width={r * 2} height={36} data-ignore-export style={{ pointerEvents: mode === "connect" ? "none" : "auto" }}>
                       <InlineEdit text={n.name} onChange={(val) => renameNode(n.id, val)} className="mx-auto text-center" />
                     </foreignObject>
-                    <foreignObject x={-40} y={r - 22} width={80} height={26} data-ignore-export>
+                    <foreignObject x={-40} y={r - 22} width={80} height={26} data-ignore-export style={{ pointerEvents: mode === "connect" ? "none" : "auto" }}>
                       <InlineEdit text={`${n.area}`} onChange={(val) => changeArea(n.id, val)} className="text-center" />
                     </foreignObject>
                   </g>
@@ -1450,7 +1444,7 @@ function InlineEdit({ text, onChange, className }) {
         className={`pointer-events-auto select-none text-[11px] text-white/90 bg-transparent ${className}`}
         style={{ lineHeight: 1.2 }}
       >
-        {/* double‑click to edit */}
+        {/* double-click to edit */}
       </div>
     );
   }
@@ -1486,16 +1480,6 @@ function InlineEditField({ label, value, onChange }) {
   );
 }
 
-// Wrap long labels into tspans
-function wrapText(text, max = 16) {
-  const words = String(text).split(/\s+/); const lines = []; let cur = "";
-  for (const w of words) {
-    if ((cur + " " + w).trim().length > max) { if (cur) lines.push(cur); cur = w; }
-    else { cur = (cur + " " + w).trim(); }
-  }
-  if (cur) lines.push(cur);
-  return lines.slice(0, 5);
-}
 // --- Precise width-based SVG text wrapping (uses canvas measureText) ---------
 const _measureCtx = (() => {
   try {
@@ -1506,17 +1490,12 @@ const _measureCtx = (() => {
 
 function measureWidth(s, fontFamily, fontPx) {
   const ctx = _measureCtx;
-  if (!ctx) return String(s).length * fontPx * 0.6; // heuristic fallback
+  if (!ctx) return String(s).length * fontPx * 0.6;
   ctx.font = `${Math.max(8, fontPx)}px ${fontFamily || "system-ui, Arial"}`;
   return ctx.measureText(String(s)).width;
 }
 
-/**
- * Wrap a label to a specific max pixel width using canvas text metrics.
- * - Breaks on spaces when possible.
- * - If a single word is too long, it hard-wraps by characters.
- * - Limits lines to maxLines (adds ellipsis if truncated).
- */
+/** Wrap a label to a specific max pixel width using canvas text metrics. */
 function wrapToWidth(label, fontFamily, fontPx, maxWidth, maxLines = 5) {
   const words = String(label).split(/\s+/).filter(Boolean);
   const lines = [];
@@ -1527,7 +1506,6 @@ function wrapToWidth(label, fontFamily, fontPx, maxWidth, maxLines = 5) {
   for (let i = 0; i < words.length; i++) {
     const w = words[i];
     if (!cur) {
-      // If the word alone exceeds width, hard-wrap by chars
       if (measureWidth(w, fontFamily, fontPx) > maxWidth) {
         let buf = "";
         for (const ch of w) {
@@ -1551,24 +1529,21 @@ function wrapToWidth(label, fontFamily, fontPx, maxWidth, maxLines = 5) {
   }
   if (lines.length < maxLines && cur) pushLine(cur);
 
-  // Ellipsize if too many words to fit
   if (lines.length > maxLines) {
     return lines.slice(0, maxLines - 1).concat([lines[maxLines - 1] + "…"]);
   }
   return lines;
 }
 
-
 // Smoke tests (console)
 (function runSmokeTests() {
   try {
-    const parsed = parseList("A, 10\\nB 20\\nC-30\\nNoArea");
+    const parsed = parseList("A, 10\nB 20\nC-30\nNoArea");
     console.assert(parsed.length === 4, "parseList length");
     console.assert(parsed[0].area === 10 && parsed[1].area === 20 && parsed[2].area === 30, "parseList areas");
     const r = scaleRadius(parsed);
     const r10 = r(10), r20 = r(20), r30 = r(30);
     console.assert(r10 <= r20 && r20 <= r30, "scaleRadius monotonic");
-    console.assert(wrapText("one two three four five six seven eight nine ten", 4).length <= 5, "wrapText cap");
     console.assert(clampTextSize("16") === 16, "text size string→number");
     console.assert(clampTextSize(5) === TEXT_MIN, "text size min clamp");
     console.assert(clampTextSize(99) === TEXT_MAX, "text size max clamp");
