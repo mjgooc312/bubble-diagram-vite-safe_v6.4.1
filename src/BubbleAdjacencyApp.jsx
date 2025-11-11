@@ -168,7 +168,23 @@ function MarkerDefs({ styles }) {
 }
 
 // ------------------------- Persistence (localStorage) ------------------------
+
+// Mask that hides links inside bubbles to prevent visual overlap
+function LinkMask({ nodes, rOf }) {
+  return (
+    <defs>
+      <mask id="mask-links-hide-bubbles" maskUnits="userSpaceOnUse">
+        <rect x="-10000" y="-10000" width="20000" height="20000" fill="white" />
+        {nodes.map((n) => (
+          <circle key={n.id} cx={n.x || 0} cy={n.y || 0} r={Math.max(1, rOf(n.area) - 1)} fill="black" />
+        ))}
+      </mask>
+    </defs>
+  );
+}
+
 const LS_KEY = "bubbleBuilder:v1";
+
 function loadPresets() {
   try { return JSON.parse(localStorage.getItem(LS_KEY) || "{}"); } catch { return {}; }
 }
@@ -405,6 +421,7 @@ useEffect(() => {
     if (physics) sim.alpha(0.9).restart(); else sim.stop();
 
     const onTick = () => {
+      if (isDraggingRef.current) return;
       if (rafRef.current != null) return;
       rafRef.current = requestAnimationFrame(() => {
         rafRef.current = null;
@@ -567,14 +584,17 @@ function updateFromList() {
 
   // ---------------------------- Dragging -------------------------------------
   const draggingRef = useRef(null);
+  const isDraggingRef = useRef(false);
   const dragStartSnapshotRef = useRef(null);
   function onPointerDownNode(e, node) {
     e.stopPropagation();
     setSelectedNodeId(node.id);
     draggingRef.current = node.id;
     dragStartSnapshotRef.current = snapshot();
+    isDraggingRef.current = true;
     try { e.currentTarget.setPointerCapture?.(e.pointerId); } catch {}
-    simRef.current?.alphaTarget(0.4).restart();
+    isDraggingRef.current = false;
+    simRef.current?.alphaTarget(0.3); // keep forces calm while dragging
   }
   function svgToLocalPoint(svgEl, clientX, clientY) {
     if (!svgEl) return { x: clientX, y: clientY };
@@ -588,9 +608,22 @@ function updateFromList() {
     const p = new DOMPoint(loc.x, loc.y).matrixTransform(innerCTM.inverse());
     return { x: p.x, y: p.y };
   }
-  function onPointerMove(e) {
-    const id = draggingRef.current; if (!id) return;
-    const svg = svgRef.current; const { x, y } = svgToLocalPoint(svg, e.clientX, e.clientY);
+  
+function onPointerMove(e) {
+  const id = draggingRef.current; if (!id) return;
+  const svg = svgRef.current; const { x, y } = svgToLocalPoint(svg, e.clientX, e.clientY);
+  setNodes((prev) => prev.map((n) => (n.id === id ? { ...n, x, y, fx: x, fy: y } : n)));
+  try {
+    const sim = simRef.current;
+    if (sim && sim.nodes) {
+      const arr = sim.nodes();
+      for (const n of arr) {
+        if (n.id === id) { n.x = x; n.y = y; n.fx = x; n.fy = y; n.vx = 0; n.vy = 0; break; }
+      }
+    }
+  } catch {}
+}
+ = svgToLocalPoint(svg, e.clientX, e.clientY);
     setNodes((prev) => prev.map((n) => (n.id === id ? { ...n, x, y, fx: x, fy: y } : n)));
   }
   function onPointerUp() {
@@ -599,7 +632,8 @@ function updateFromList() {
     if (dragStartSnapshotRef.current) historyRef.current.push(dragStartSnapshotRef.current);
     dragStartSnapshotRef.current = null;
     futureRef.current = [];
-    simRef.current?.alphaTarget(0);
+    isDraggingRef.current = false;
+    simRef.current?.alphaTarget(0.3);
   }
 
   // ---------------------------- Node style setters ---------------------------
@@ -1330,8 +1364,10 @@ VOD Review / Theater, 60`} value={rawList} onChange={(e) => setRawList(e.target.
         <div ref={containerRef} className="relative rounded-2xl border border-[#2a2a3a] overflow-hidden" style={{ background: liveBg }}>
           <svg ref={svgRef} width={"100%"} height={700} viewBox={`-600 -350 1200 700`} className="block">
             <MarkerDefs styles={styles} />
+            <LinkMask nodes={nodes} rOf={rOf} />
             <g id="zoomable" transform={zoomTransform.toString()}>
               {/* Links */}
+              <g mask="url(#mask-links-hide-bubbles)">
               {links.map((l) => {
                 const s = nodes.find((n) => n.id === l.source); const t = nodes.find((n) => n.id === l.target);
                 if (!s || !t) return null;
@@ -1430,7 +1466,7 @@ VOD Review / Theater, 60`} value={rawList} onChange={(e) => setRawList(e.target.
           </summary>
           <div className="mt-3 text-sm leading-6 text-[#d8d8e2]">
             <p><strong>Authored by:</strong> Mark Jay O. Gooc — Architecture student, Batangas State University – TNEU (ARC‑5108)</p>
-            <p className="opacity-80">All rights reserve 2025. </p>
+            <p className="opacity-80">Bubble Diagram Builder (React + D3). Version 4.3 — arrow overlap, rotation sensitivity, rounded color pickers, preset persistence, live background controls, zoom/pan, fullscreen, and improved exports.</p>
           </div>
         </details>
       </div>
