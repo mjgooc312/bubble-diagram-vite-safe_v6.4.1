@@ -266,6 +266,17 @@ export default function BubbleAdjacencyApp() {
   // Right panel (D5-style) toggle
   const [panelOpen, setPanelOpen] = useState(true);
   const [leftPanelOpen, setLeftPanelOpen] = useState(true);
+  // Quick-jump anchors for right panel sections
+  const sectionRefs = {
+    modes: useRef(null),
+    bubbles: useRef(null),
+    bg: useRef(null),
+    spacing: useRef(null),
+    physics: useRef(null),
+    export: useRef(null),
+  };
+  const jumpTo = (k) => sectionRefs[k]?.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+
   // Compact layout for right panel
   const [panelCompact, setPanelCompact] = useState(false);
 
@@ -1158,7 +1169,25 @@ function zeroVelocities() {
       )}
 {/* Right Panel */}
             <div className={panelOpen ? "fixed right-0 top-0 z-30 h-screen w-[420px] overflow-y-auto overflow-x-hidden border-l panel-scroll border-[#2a2a3a] bg-[#0b0b12]" : "fixed right-0 top-0 z-20 h-screen w-[56px] overflow-y-auto border-l border-[#2a2a3a] bg-[#0b0b12]"} data-aside="true">
-        <div className="px-4 py-5 pb-24 grid grid-cols-1 gap-4 min-w-0">
+        <div className="px-4 py-5 pb-36 grid grid-cols-1 gap-4 min-w-0">
+          {/* Sticky tools + quick jump */}
+          <div className="sticky top-0 z-10 -mx-4 px-4 pb-2 bg-[#0b0b12]/95 backdrop-blur border-b border-[#2a2a3a]">
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-xs font-semibold tracking-wide text-white/70">Tool settings</div>
+              <div className="flex flex-wrap gap-2 text-[11px]">
+                {["modes","bubbles","bg","spacing","physics","export"].map((t)=>(
+                  <button key={t} onClick={()=>jumpTo(t)}
+                    className="px-2.5 py-1 rounded-full border border-white/10 hover:bg-white/5">
+                    {t==="modes"?"Modes":t==="bubbles"?"Bubbles":t==="bg"?"Backgrounds":t==="spacing"?"Spacing":t==="physics"?"Physics/Scenes":"Export"}
+                  </button>
+                ))}
+              </div>
+              <button onClick={()=>setPanelCompact(v=>!v)} className="px-3 py-1.5 rounded-full border border-white/10 hover:bg-white/5 text-xs">
+                {panelCompact ? "Comfort" : "Compact"}
+              </button>
+            </div>
+          </div>
+
           {/* Panel quick tools */}
           <div className="sticky top-0 z-10 -mx-4 px-4 pb-2 bg-[#0b0b12]/90 backdrop-blur border-b border-[#2a2a3a]">
             <div className="flex items-center justify-between text-xs">
@@ -1308,7 +1337,7 @@ function zeroVelocities() {
               <span className="opacity-70">%</span>
             </div>
             {/* Measurements toggle */}
-            <div className="col-span-2 md:col-span-6 lg:col-span-4 flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs w-full">
+            <div className="col-span-2 md:col-span-6 lg:col-span-4 flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs w-full" ref={sectionRefs.physics}>
               <label className="flex items-center gap-1">
                 <input type="checkbox" checked={showMeasurements} onChange={(e) => setShowMeasurements(e.target.checked)} />
                 show m² labels
@@ -1366,7 +1395,7 @@ function zeroVelocities() {
       
 {/* Left Panel */}
             <div className={leftPanelOpen ? "fixed left-0 top-0 z-30 h-screen w-[420px] overflow-y-auto overflow-x-hidden border-r panel-scroll border-[#2a2a3a] bg-[#0b0b12]" : "fixed left-0 top-0 z-30 h-screen w-[56px] overflow-y-auto overflow-x-hidden border-r panel-scroll border-[#2a2a3a] bg-[#0b0b12]"}>
-              <div className="px-4 py-5 pb-24 grid grid-cols-1 gap-4 min-w-0">
+              <div className="px-4 py-5 pb-36 grid grid-cols-1 gap-4 min-w-0">
                 {/* Panel toggle */}
                 <button
                   className="absolute right-[-28px] top-4 h-8 w-8 rounded-full border border-[#2a2a3a] bg-[#0b0b12] hover:bg-white/5 text-xs"
