@@ -3,12 +3,12 @@ import * as d3 from "d3";
 
 /**
  * Bubble Diagram Builder – Force-directed (React + D3)
- * v4.4 — Detangle pulse + Connect-mode click fix
+ * v4.5 — Detangle pulse + Connect-mode click fix + Readability tweaks
  *
- * • New: “De-tangle (explode→shrink)” button that temporarily increases spacing/repulsion
- *   to separate connected bubbles, then eases back.
- * • Fix: In Connect mode, text editors no longer block clicks; dragging is disabled
- *   while connecting so a line always forms on the second click.
+ * • “De-tangle (explode→shrink)” button to separate connected bubbles.
+ * • Connect mode: editors don’t block clicks; dragging disabled while connecting.
+ * • NEW: High-contrast dropdowns (class .ui-select) for dark UI.
+ * • NEW: Label halo stroke so text stays readable on any fill.
  */
 
 // ---- Theme (UI chrome only; not the canvas background) ----------------------
@@ -217,7 +217,7 @@ export default function BubbleAdjacencyApp() {
   const [rotationSensitivity, setRotationSensitivity] = useState(0); // 0..100
   const [showMeasurements, setShowMeasurements] = useState(true);
 
-  // NEW: detangle pulse (explode → shrink)
+  // detangle pulse (explode → shrink)
   const [explodeFactor, setExplodeFactor] = useState(1); // 1 = normal, >1 = expanded
   const explodeTORef = useRef(null);
 
@@ -586,7 +586,7 @@ export default function BubbleAdjacencyApp() {
     e.stopPropagation();
     setSelectedNodeId(node.id);
 
-    // IMPORTANT: do not start drag while in Connect mode (fix for missed links)
+    // do not start drag while in Connect mode (ensures second click creates link)
     if (mode === "connect") return;
 
     draggingRef.current = node.id;
@@ -1051,8 +1051,10 @@ export default function BubbleAdjacencyApp() {
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
     >
-      {/* Global styles to make color inputs smooth rounded pills */}
+      {/* Global styles: color pills + high-contrast selects */}
       <style data-ignore-export>{`
+        :root { color-scheme: dark; }
+
         input[type="color"] {
           -webkit-appearance: none;
           appearance: none;
@@ -1066,6 +1068,22 @@ export default function BubbleAdjacencyApp() {
         input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; border-radius: 9999px; }
         input[type="color"]::-webkit-color-swatch { border: none; border-radius: 9999px; }
         input[type="color"]::-moz-color-swatch { border: none; border-radius: 9999px; }
+
+        /* --- High-contrast form controls on dark UI --- */
+        .ui-select{
+          background:#0f0f18;
+          color:#e6e6f0;
+          border:1px solid ${THEME.border};
+          border-radius:10px;
+          padding:6px 8px;
+          font-size:13px;
+          line-height:1.2;
+          box-shadow:0 6px 18px rgba(0,0,0,.35);
+        }
+        .ui-select:focus{ outline:2px solid #8b5cf6; outline-offset:2px; }
+        .ui-select option{ background:#0f0f18; color:#e6e6f0; }
+        .ui-select option:checked,
+        .ui-select option:hover{ background:#1b1b2a !important; color:#fff !important; }
       `}</style>
 
       {/* Toolbar */}
@@ -1095,11 +1113,11 @@ export default function BubbleAdjacencyApp() {
                 <label className="flex items-center gap-1">w
                   <input type="number" min={1} max={12} value={styles[key].width} className="w-14 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" onChange={(e) => setStyles((s) => ({ ...s, [key]: { ...s[key], width: Math.max(1, Math.min(12, +e.target.value || 1)) } }))} />
                 </label>
-                <select className="bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" value={styles[key].headStart} onChange={(e) => setStyles((s) => ({ ...s, [key]: { ...s[key], headStart: e.target.value } }))}>
+                <select className="ui-select" value={styles[key].headStart} onChange={(e) => setStyles((s) => ({ ...s, [key]: { ...s[key], headStart: e.target.value } }))}>
                   {HEAD_SHAPES.map((h) => (<option key={h} value={h}>{h}</option>))}
                 </select>
                 <span>→</span>
-                <select className="bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" value={styles[key].headEnd} onChange={(e) => setStyles((s) => ({ ...s, [key]: { ...s[key], headEnd: e.target.value } }))}>
+                <select className="ui-select" value={styles[key].headEnd} onChange={(e) => setStyles((s) => ({ ...s, [key]: { ...s[key], headEnd: e.target.value } }))}>
                   {HEAD_SHAPES.map((h) => (<option key={h} value={h}>{h}</option>))}
                 </select>
                 <button className={`ml-2 px-2 py-1 rounded-md border border-[#2a2a3a] ${currentLineType === key ? "bg-white/10" : ""}`} onClick={() => setCurrentLineType(key)}>Use</button>
@@ -1125,7 +1143,7 @@ export default function BubbleAdjacencyApp() {
             {/* Text (label) bulk styles */}
             <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
               <span className="opacity-70">Labels:</span>
-              <select className="bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" value={bulkTextFont} onChange={(e) => setBulkTextFont(e.target.value)}>
+              <select className="ui-select" value={bulkTextFont} onChange={(e) => setBulkTextFont(e.target.value)}>
                 <option value={FONT_STACKS.Outfit}>Outfit</option>
                 <option value={FONT_STACKS.Inter}>Inter</option>
                 <option value={FONT_STACKS.Poppins}>Poppins</option>
@@ -1194,7 +1212,7 @@ export default function BubbleAdjacencyApp() {
             <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={() => setPhysics((p) => !p)}>{physics ? "Physics: ON" : "Physics: OFF"}</button>
             <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={() => setNodes([...nodes])}>Re-Layout</button>
 
-            {/* NEW: De-tangle pulse */}
+            {/* De-tangle pulse */}
             <button className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm" onClick={detanglePulse}>
               De-tangle (explode→shrink)
             </button>
@@ -1202,7 +1220,7 @@ export default function BubbleAdjacencyApp() {
             {/* Scenes */}
             <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-2 py-2 text-xs">
               <span className="opacity-70">Scene:</span>
-              <select className="bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
+              <select className="ui-select"
                       value={activeSceneId || ""}
                       onChange={(e) => setActiveSceneId(e.target.value || null)}>
                 <option value="">(none)</option>
@@ -1287,7 +1305,7 @@ VOD Review / Theater, 60`} value={rawList} onChange={(e) => setRawList(e.target.
                 </label>
               </div>
               <div className="flex items-center gap-3 flex-wrap">
-                <select className="bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5" value={selectedNode.textFont || bulkTextFont} onChange={(e) => setNodeTextFont(selectedNode.id, e.target.value)}>
+                <select className="ui-select" value={selectedNode.textFont || bulkTextFont} onChange={(e) => setNodeTextFont(selectedNode.id, e.target.value)}>
                   <option value={FONT_STACKS.Outfit}>Outfit</option>
                   <option value={FONT_STACKS.Inter}>Inter</option>
                   <option value={FONT_STACKS.Poppins}>Poppins</option>
@@ -1374,8 +1392,20 @@ VOD Review / Theater, 60`} value={rawList} onChange={(e) => setRawList(e.target.
                     <circle r={r} fill={n.fill ?? (bulkFillTransparent ? "none" : bulkFill)} stroke={hi ? styles.necessary.color : (n.stroke || bulkStroke)} strokeWidth={n.strokeWidth ?? bulkStrokeWidth} />
                     <circle r={r - 2} fill="none" stroke="#2c2c3c" strokeWidth={1} />
 
-                    <text textAnchor="middle" dominantBaseline="middle" className="select-none"
-                          style={{ fill: labelColor, fontSize: labelSize, fontWeight: 600, letterSpacing: 0.4, fontFamily: labelFont }}>
+                    <text
+                      textAnchor="middle"
+                      dominantBaseline="middle"
+                      className="select-none"
+                      style={{
+                        fill: labelColor,
+                        fontSize: labelSize,
+                        fontWeight: 600,
+                        letterSpacing: 0.4,
+                        fontFamily: labelFont,
+                        paintOrder: "stroke",
+                        stroke: "rgba(0,0,0,.45)",   // HALO for readability
+                        strokeWidth: 3
+                      }}>
                       {(() => {
                         const pad = 10;
                         const maxW = Math.max(20, (r - pad) * 2);
@@ -1395,7 +1425,7 @@ VOD Review / Theater, 60`} value={rawList} onChange={(e) => setRawList(e.target.
                       </text>
                     )}
 
-                    {/* IMPORTANT: disable editor hitboxes while connecting so clicks create links */}
+                    {/* disable editor hitboxes while connecting so clicks create links */}
                     <foreignObject x={-r} y={-18} width={r * 2} height={36} data-ignore-export style={{ pointerEvents: mode === "connect" ? "none" : "auto" }}>
                       <InlineEdit text={n.name} onChange={(val) => renameNode(n.id, val)} className="mx-auto text-center" />
                     </foreignObject>
