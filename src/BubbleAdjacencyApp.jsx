@@ -117,7 +117,24 @@ function scaleRadius(nodes) {
   const sqrtAreas = nodes.map((n) => Math.sqrt(Math.max(1, n.area || 1)));
   const min = d3.min(sqrtAreas) ?? 1;
   const max = d3.max(sqrtAreas) ?? 1;
-  return (area) => {
+  return (area) =>
+      {/* Global scrollbar styling for side panels */}
+      <style>{`
+        .panel-scroll { scrollbar-gutter: stable both-edges; }
+        /* Chromium/WebKit */
+        .panel-scroll::-webkit-scrollbar { width: 10px; height: 10px; }
+        .panel-scroll::-webkit-scrollbar-track { background: transparent; }
+        .panel-scroll::-webkit-scrollbar-thumb {
+          background: rgba(255,255,255,0.18);
+          border-radius: 8px;
+          border: 2px solid rgba(0,0,0,0);
+          background-clip: padding-box;
+        }
+        .panel-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.28); }
+        /* Firefox */
+        .panel-scroll { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.25) transparent; }
+      `}</style>
+ {
     const v = Math.sqrt(Math.max(1, area || 1));
     if (max === min) return BASE_R_MIN;
     return BASE_R_MIN + ((v - min) / (max - min)) * (BASE_R_MAX - BASE_R_MIN);
@@ -1137,7 +1154,7 @@ function zeroVelocities() {
         </div>
       )}
 {/* Right Panel */}
-            <div className={panelOpen ? "fixed right-0 top-0 z-20 h-screen w-[420px] overflow-y-auto overflow-x-hidden border-l border-[#2a2a3a] bg-[#0b0b12]" : "fixed right-0 top-0 z-20 h-screen w-[56px] overflow-y-auto border-l border-[#2a2a3a] bg-[#0b0b12]"} data-aside="true">
+            <div className={panelOpen ? "fixed right-0 top-0 z-30 h-screen w-[420px] overflow-y-auto overflow-x-hidden border-l panel-scroll border-[#2a2a3a] bg-[#0b0b12]" : "fixed right-0 top-0 z-20 h-screen w-[56px] overflow-y-auto border-l border-[#2a2a3a] bg-[#0b0b12]"} data-aside="true">
         <div className="px-4 py-5 pb-24 grid grid-cols-1 gap-4 min-w-0">
           {/* Panel toggle */}
           <button
@@ -1331,7 +1348,7 @@ function zeroVelocities() {
 
       
 {/* Left Panel */}
-            <div className={leftPanelOpen ? "fixed left-0 top-0 z-20 h-screen w-[420px] overflow-y-auto overflow-x-hidden border-r border-[#2a2a3a] bg-[#0b0b12]" : "fixed left-0 top-0 z-20 h-screen w-[56px] overflow-y-auto overflow-x-hidden border-r border-[#2a2a3a] bg-[#0b0b12]"}>
+            <div className={leftPanelOpen ? "fixed left-0 top-0 z-30 h-screen w-[420px] overflow-y-auto overflow-x-hidden border-r panel-scroll border-[#2a2a3a] bg-[#0b0b12]" : "fixed left-0 top-0 z-30 h-screen w-[56px] overflow-y-auto overflow-x-hidden border-r panel-scroll border-[#2a2a3a] bg-[#0b0b12]"}>
               <div className="px-4 py-5 pb-24 grid grid-cols-1 gap-4 min-w-0">
                 {/* Panel toggle */}
                 <button
