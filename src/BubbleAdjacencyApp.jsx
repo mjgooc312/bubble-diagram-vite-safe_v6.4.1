@@ -3,18 +3,10 @@ import * as d3 from "d3";
 
 /**
  * Bubble Diagram Builder – Force-directed (React + D3)
- * v4.7.0 — v1.0 label • Multi-select + Lasso • Pin/Lock • Adjacency Matrix • Conflict detector
- * Autosave/Recovery • Keyboard Cheatsheet (?) • High-contrast mode • Arrow layer above bubbles
+ * v4.9.0 — JSON dock • Gradients • Keyboard type switch • Auto-connect conflicts
+ *           No-overlap w/ physics OFF • Dynamic label sizing • Inspector delete fix
  *
- * New in this build:
- * 1) "v1.0" label in header next to title.
- * 2) Multi-select + lasso (Shift+drag on background). Move as a group; style or delete many.
- * 3) Lock/Pin nodes (per-node or bulk for selection). Locked nodes are fixed against physics.
- * 4) Adjacency Matrix (editable) to create/remove links bidirectionally.
- * 5) Conflict detector: expected "necessary" pairs + long-link warnings with highlight overlay.
- * 6) Autosave every 45s to localStorage + quick restore on load.
- * 7) Keyboard cheatsheet overlay with '?' (or Shift+/). Also: A=Select all, Esc=Clear, Arrows=Nudge.
- * 8) Accessibility: High-contrast mode toggle, bigger focus rings, keyboardable operations.
+ * Drop this in your app (e.g., src/BubbleAdjacencyApp.jsx) and render it.
  */
 
 // ---- Theme (UI chrome only; not the canvas background) ----------------------
@@ -100,9 +92,7 @@ function download(url, filename) {
     a.click();
     setTimeout(() => {
       document.body.removeChild(a);
-      try {
-        URL.revokeObjectURL(url);
-      } catch {}
+      try { URL.revokeObjectURL(url); } catch {}
     }, 50);
   } catch {
     window.open(url, "_blank");
@@ -143,21 +133,10 @@ function MarkerDefs({ styles }) {
             />
           )}
           {shape === "circle" && (
-            <circle
-              cx={kind === "end" ? 7 : 3}
-              cy={3.5}
-              r={3}
-              fill={st.color}
-            />
+            <circle cx={kind === "end" ? 7 : 3} cy={3.5} r={3} fill={st.color} />
           )}
           {shape === "square" && (
-            <rect
-              x={kind === "end" ? 3 : 1}
-              y={1}
-              width={6}
-              height={6}
-              fill={st.color}
-            />
+            <rect x={kind === "end" ? 3 : 1} y={1} width={6} height={6} fill={st.color} />
           )}
           {shape === "diamond" && (
             <polygon
@@ -167,13 +146,7 @@ function MarkerDefs({ styles }) {
             />
           )}
           {shape === "bar" && (
-            <rect
-              x={kind === "end" ? 7.5 : 1.5}
-              y={0.5}
-              width={1.5}
-              height={6.5}
-              fill={st.color}
-            />
+            <rect x={kind === "end" ? 7.5 : 1.5} y={0.5} width={1.5} height={6.5} fill={st.color} />
           )}
         </marker>
       );
@@ -186,16 +159,10 @@ function MarkerDefs({ styles }) {
 const LS_KEY = "bubbleBuilder:v1";
 const AUTOSAVE_KEY = "bubbleBuilder:autosave";
 function loadPresets() {
-  try {
-    return JSON.parse(localStorage.getItem(LS_KEY) || "{}");
-  } catch {
-    return {};
-  }
+  try { return JSON.parse(localStorage.getItem(LS_KEY) || "{}"); } catch { return {}; }
 }
 function savePresets(obj) {
-  try {
-    localStorage.setItem(LS_KEY, JSON.stringify(obj));
-  } catch {}
+  try { localStorage.setItem(LS_KEY, JSON.stringify(obj)); } catch {}
 }
 
 // ------------------------- Custom spin force ---------------------------------
@@ -206,15 +173,12 @@ function makeSpinForce(level /* 0..100 */) {
     if (!level) return;
     const k = base * level * alpha;
     for (const n of nodes) {
-      const x = n.x || 0,
-        y = n.y || 0;
+      const x = n.x || 0, y = n.y || 0;
       n.vx += -y * k;
-      n.vy += x * k;
+      n.vy +=  x * k;
     }
   }
-  force.initialize = (ns) => {
-    nodes = ns;
-  };
+  force.initialize = (ns) => { nodes = ns; };
   return force;
 }
 
@@ -223,17 +187,26 @@ function pointInPolygon(p, poly) {
   // ray-casting
   let inside = false;
   for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const xi = poly[i].x,
-      yi = poly[i].y;
-    const xj = poly[j].x,
-      yj = poly[j].y;
+    const xi = poly[i].x, yi = poly[i].y;
+    const xj = poly[j].x, yj = poly[j].y;
     const intersect =
-      yi > p.y !== yj > p.y &&
-      p.x <
-        ((xj - xi) * (p.y - yi)) / (yj - yi + (yj === yi ? 1e-9 : 0)) + xi;
+      (yi > p.y) !== (yj > p.y) &&
+      p.x < ((xj - xi) * (p.y - yi)) / (yj - yi + (yj === yi ? 1e-9 : 0)) + xi;
     if (intersect) inside = !inside;
   }
   return inside;
+}
+
+// --- Typing guard for global key handler (fixes Delete in inputs) ------------
+function isTypingTarget(el) {
+  if (!el) return false;
+  const tag = (el.tagName || "").toUpperCase();
+  return (
+    tag === "INPUT" ||
+    tag === "TEXTAREA" ||
+    tag === "SELECT" ||
+    el.isContentEditable
+  );
 }
 
 // ----- Main App --------------------------------------------------------------
@@ -282,37 +255,20 @@ export default function BubbleAdjacencyApp() {
   // Scenes (positions + zoom)
   const SCENES_KEY = "bubbleScenes:v1";
   const [scenes, setScenes] = useState(() => {
-    try {
-      return JSON.parse(localStorage.getItem(SCENES_KEY) || "[]");
-    } catch {
-      return [];
-    }
+    try { return JSON.parse(localStorage.getItem(SCENES_KEY) || "[]"); } catch { return []; }
   });
   const [activeSceneId, setActiveSceneId] = useState(null);
   useEffect(() => {
-    try {
-      localStorage.setItem(SCENES_KEY, JSON.stringify(scenes));
-    } catch {}
+    try { localStorage.setItem(SCENES_KEY, JSON.stringify(scenes)); } catch {}
   }, [scenes]);
+
   const [updateAreasFromList, setUpdateAreasFromList] = useState(false);
   const [updateMatchMode, setUpdateMatchMode] = useState("name"); // "name" | "index"
 
   // Edge style presets
   const [styles, setStyles] = useState({
-    necessary: {
-      color: "#8b5cf6",
-      dashed: false,
-      width: 3,
-      headStart: "arrow",
-      headEnd: "arrow",
-    },
-    ideal: {
-      color: "#facc15",
-      dashed: true,
-      width: 3,
-      headStart: "arrow",
-      headEnd: "arrow",
-    },
+    necessary: { color: "#8b5cf6", dashed: false, width: 3, headStart: "arrow", headEnd: "arrow" },
+    ideal:      { color: "#facc15", dashed: true,  width: 3, headStart: "arrow", headEnd: "arrow" },
   });
 
   // Export background (used for exported image files)
@@ -331,6 +287,13 @@ export default function BubbleAdjacencyApp() {
   const [bulkTextFont, setBulkTextFont] = useState(FONT_STACKS.Outfit);
   const [bulkTextColor, setBulkTextColor] = useState("#e6e6f0");
   const [bulkTextSize, setBulkTextSize] = useState(12);
+
+  // New: Bulk gradient and dynamic label options
+  const [bulkFillType, setBulkFillType] = useState("solid"); // 'solid' | 'gradient'
+  const [bulkGrad0, setBulkGrad0] = useState("#2b2b3b");
+  const [bulkGrad1, setBulkGrad1] = useState("#0e0e17");
+  const [bulkGradAngle, setBulkGradAngle] = useState(45);
+  const [dynamicText, setDynamicText] = useState(false); // global toggle
 
   // Refs
   const svgRef = useRef(null);
@@ -355,6 +318,10 @@ export default function BubbleAdjacencyApp() {
     buffer,
     arrowOverlap,
     rotationSensitivity,
+    bulk: {
+      bulkFillType, bulkGrad0, bulkGrad1, bulkGradAngle,
+      dynamicText
+    }
   });
   const pushHistory = () => {
     historyRef.current.push(snapshot());
@@ -370,6 +337,13 @@ export default function BubbleAdjacencyApp() {
     setBuffer(prev.buffer);
     setArrowOverlap(prev.arrowOverlap ?? 0);
     setRotationSensitivity(prev.rotationSensitivity ?? 0);
+    if (prev.bulk) {
+      setBulkFillType(prev.bulk.bulkFillType ?? "solid");
+      setBulkGrad0(prev.bulk.bulkGrad0 ?? "#2b2b3b");
+      setBulkGrad1(prev.bulk.bulkGrad1 ?? "#0e0e17");
+      setBulkGradAngle(prev.bulk.bulkGradAngle ?? 45);
+      setDynamicText(!!prev.bulk.dynamicText);
+    }
   }
   function redo() {
     if (!futureRef.current.length) return;
@@ -381,6 +355,13 @@ export default function BubbleAdjacencyApp() {
     setBuffer(next.buffer);
     setArrowOverlap(next.arrowOverlap ?? 0);
     setRotationSensitivity(next.rotationSensitivity ?? 0);
+    if (next.bulk) {
+      setBulkFillType(next.bulk.bulkFillType ?? "solid");
+      setBulkGrad0(next.bulk.bulkGrad0 ?? "#2b2b3b");
+      setBulkGrad1(next.bulk.bulkGrad1 ?? "#0e0e17");
+      setBulkGradAngle(next.bulk.bulkGradAngle ?? 45);
+      setDynamicText(!!next.bulk.dynamicText);
+    }
   }
 
   // ---------------------------- Preset Persistence + Autosave ----------------
@@ -390,19 +371,22 @@ export default function BubbleAdjacencyApp() {
     if (p.styles) setStyles((s) => ({ ...s, ...p.styles }));
     if (typeof p.buffer === "number") setBuffer(p.buffer);
     if (typeof p.arrowOverlap === "number") setArrowOverlap(p.arrowOverlap);
-    if (typeof p.rotationSensitivity === "number")
-      setRotationSensitivity(p.rotationSensitivity);
+    if (typeof p.rotationSensitivity === "number") setRotationSensitivity(p.rotationSensitivity);
     if (p.bulk) {
       const b = p.bulk;
       if (typeof b.bulkFill === "string") setBulkFill(b.bulkFill);
-      if (typeof b.bulkFillTransparent === "boolean")
-        setBulkFillTransparent(b.bulkFillTransparent);
+      if (typeof b.bulkFillTransparent === "boolean") setBulkFillTransparent(b.bulkFillTransparent);
       if (typeof b.bulkStroke === "string") setBulkStroke(b.bulkStroke);
-      if (typeof b.bulkStrokeWidth === "number")
-        setBulkStrokeWidth(Math.max(1, Math.min(12, b.bulkStrokeWidth)));
+      if (typeof b.bulkStrokeWidth === "number") setBulkStrokeWidth(Math.max(1, Math.min(12, b.bulkStrokeWidth)));
       if (typeof b.bulkTextFont === "string") setBulkTextFont(b.bulkTextFont);
       if (typeof b.bulkTextColor === "string") setBulkTextColor(b.bulkTextColor);
       if (b.bulkTextSize != null) setBulkTextSize(clampTextSize(b.bulkTextSize));
+
+      if (b.bulkFillType) setBulkFillType(b.bulkFillType);
+      if (b.bulkGrad0) setBulkGrad0(b.bulkGrad0);
+      if (b.bulkGrad1) setBulkGrad1(b.bulkGrad1);
+      if (typeof b.bulkGradAngle === "number") setBulkGradAngle(b.bulkGradAngle);
+      if (typeof b.dynamicText === "boolean") setDynamicText(b.dynamicText);
     }
     if (p.exportBgMode) setExportBgMode(p.exportBgMode);
     if (p.exportBgCustom) setExportBgCustom(p.exportBgCustom);
@@ -424,6 +408,7 @@ export default function BubbleAdjacencyApp() {
         bulkTextFont,
         bulkTextColor,
         bulkTextSize: clampTextSize(bulkTextSize),
+        bulkFillType, bulkGrad0, bulkGrad1, bulkGradAngle, dynamicText,
       },
       exportBgMode,
       exportBgCustom,
@@ -445,6 +430,7 @@ export default function BubbleAdjacencyApp() {
     bulkTextFont,
     bulkTextColor,
     bulkTextSize,
+    bulkFillType, bulkGrad0, bulkGrad1, bulkGradAngle, dynamicText,
     exportBgMode,
     exportBgCustom,
     liveBgMode,
@@ -466,7 +452,7 @@ export default function BubbleAdjacencyApp() {
     }, 45000);
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodes, links, styles, buffer, rotationSensitivity, arrowOverlap]);
+  }, [nodes, links, styles, buffer, rotationSensitivity, arrowOverlap, dynamicText, bulkFillType, bulkGrad0, bulkGrad1, bulkGradAngle]);
 
   // Offer crash-recovery restore once on mount
   useEffect(() => {
@@ -509,33 +495,9 @@ export default function BubbleAdjacencyApp() {
     if (physics && rotationSensitivity > 0) sim.alpha(0.5).restart();
   }, [rotationSensitivity, physics]);
 
-  // Update charge & collide strength when explodeFactor changes (detangle pulse)
-  useEffect(() => {
-    const sim = simRef.current;
-    if (!sim) return;
-    const baseCharge = -80;
-    const mult = explodeFactor > 1 ? 1.8 * explodeFactor : 1;
-    const charge = sim.force("charge");
-    charge && charge.strength(baseCharge * mult);
-
-    sim.force(
-      "collide",
-      d3
-        .forceCollide()
-        .radius(
-          (d) =>
-            (d.r || BASE_R_MIN) +
-            buffer +
-            Math.max(0, (explodeFactor - 1) * 18)
-        )
-    );
-
-    if (physics) sim.alpha(0.7).restart();
-  }, [explodeFactor, buffer, physics]);
-
+  // Update forces when nodes/links/buffer change
   const rafRef = useRef(null);
   useEffect(() => {
-    // lock-fix: inject fx/fy for locked nodes if absent
     const nn = nodes.map((n) => ({
       ...n,
       r: rOf(n.area),
@@ -543,16 +505,13 @@ export default function BubbleAdjacencyApp() {
       fy: n.locked ? (n.fy ?? n.y ?? 0) : n.fy,
     }));
 
-    // Build link objects (dedupe to 1 per pair)
+    // Build link objects (dedupe)
     const byPair = new Map();
     for (const l of links) {
       const k = pairKey(l.source, l.target);
       const prev = byPair.get(k);
       if (!prev) byPair.set(k, l);
-      else {
-        // prefer "necessary" over "ideal" if duplicate
-        if (prev.type !== "necessary" && l.type === "necessary") byPair.set(k, l);
-      }
+      else if (prev.type !== "necessary" && l.type === "necessary") byPair.set(k, l);
     }
     const linkArr = Array.from(byPair.values()).map((l) => ({
       ...l,
@@ -567,8 +526,7 @@ export default function BubbleAdjacencyApp() {
       .forceLink(linkArr)
       .id((d) => d.id)
       .distance((l) => {
-        const base =
-          (l.source.r || BASE_R_MIN) + (l.target.r || BASE_R_MIN);
+        const base = (l.source.r || BASE_R_MIN) + (l.target.r || BASE_R_MIN);
         const k = l.type === "necessary" ? 1.1 : 1.0;
         const d0 = base * 1.05 * k + 40 + buffer * 1.5;
         return d0 * (explodeFactor || 1);
@@ -578,14 +536,7 @@ export default function BubbleAdjacencyApp() {
     sim.nodes(nn);
     sim.force(
       "collide",
-      d3
-        .forceCollide()
-        .radius(
-          (d) =>
-            (d.r || BASE_R_MIN) +
-            buffer +
-            Math.max(0, (explodeFactor - 1) * 18)
-        )
+      d3.forceCollide().radius((d) => (d.r || BASE_R_MIN) + buffer + Math.max(0, (explodeFactor - 1) * 18))
     );
     sim.force("link", linkForce);
     sim.force("x", d3.forceX().strength(0.03));
@@ -613,6 +564,54 @@ export default function BubbleAdjacencyApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodes.length, links, physics, rOf, buffer, explodeFactor]);
 
+  // ---- Manual collision resolution when physics is OFF or during drag -------
+  function resolveCollisionsInPlace(arr, movedIds, passes = 3) {
+    const moved = new Set(movedIds || arr.map(n => n.id));
+    for (let p = 0; p < passes; p++) {
+      for (let i = 0; i < arr.length; i++) {
+        const a = arr[i];
+        const ra = rOf(a.area);
+        for (let j = i + 1; j < arr.length; j++) {
+          const b = arr[j];
+          const rb = rOf(b.area);
+          const dx = (a.x || 0) - (b.x || 0);
+          const dy = (a.y || 0) - (b.y || 0);
+          let d = Math.hypot(dx, dy) || 1;
+          const min = ra + rb + buffer;
+          if (d < min) {
+            const overlap = (min - d) + 0.25;
+            const ux = dx / d, uy = dy / d;
+            // Only move the dragged/moved one if possible; otherwise split the push
+            if (moved.has(a.id) && !moved.has(b.id)) {
+              a.x += ux * overlap;
+              a.y += uy * overlap;
+            } else if (!moved.has(a.id) && moved.has(b.id)) {
+              b.x -= ux * overlap;
+              b.y -= uy * overlap;
+            } else {
+              a.x += ux * (overlap * 0.5);
+              a.y += uy * (overlap * 0.5);
+              b.x -= ux * (overlap * 0.5);
+              b.y -= uy * (overlap * 0.5);
+            }
+            d = min;
+          }
+        }
+      }
+    }
+  }
+
+  // Apply separation when buffer changes and physics is OFF
+  useEffect(() => {
+    if (physics) return;
+    setNodes((prev) => {
+      const next = prev.map((n) => ({ ...n }));
+      resolveCollisionsInPlace(next, null, 4);
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [buffer, physics]);
+
   // ---------------------------- Generate / Edit -------------------------------
   function onGenerate() {
     pushHistory();
@@ -623,7 +622,11 @@ export default function BubbleAdjacencyApp() {
       ...n,
       x: Math.cos(i * angle) * R,
       y: Math.sin(i * angle) * R,
+      fillType: bulkFillType,
       fill: bulkFillTransparent ? "none" : bulkFill,
+      grad0: bulkGrad0,
+      grad1: bulkGrad1,
+      gradAngle: bulkGradAngle,
       stroke: bulkStroke,
       strokeWidth: bulkStrokeWidth,
       textFont: bulkTextFont,
@@ -654,20 +657,22 @@ export default function BubbleAdjacencyApp() {
           return {
             ...n,
             name: src.name,
-            ...(updateAreasFromList
-              ? { area: Math.max(1, +src.area || n.area) }
-              : {}),
+            ...(updateAreasFromList ? { area: Math.max(1, +src.area || n.area) } : {}),
           };
         })
       );
       if (parsed.length > nodes.length) {
         const extras = parsed.slice(nodes.length).map((x) => ({
-          id: Math.random().toString(36).slice(2, 9),
+          id: uid(),
           name: x.name,
           area: Math.max(1, +x.area || 20),
           x: (Math.random() - 0.5) * 40,
           y: (Math.random() - 0.5) * 40,
+          fillType: bulkFillType,
           fill: bulkFillTransparent ? "none" : bulkFill,
+          grad0: bulkGrad0,
+          grad1: bulkGrad1,
+          gradAngle: bulkGradAngle,
           stroke: bulkStroke,
           strokeWidth: bulkStrokeWidth,
           textFont: bulkTextFont,
@@ -679,7 +684,7 @@ export default function BubbleAdjacencyApp() {
       return;
     }
 
-    // default: match by NAME
+    // match by NAME
     setNodes((prev) => {
       const buckets = new Map();
       prev.forEach((n, idx) => {
@@ -702,19 +707,21 @@ export default function BubbleAdjacencyApp() {
           updated[idx] = {
             ...updated[idx],
             name: src.name,
-            ...(updateAreasFromList
-              ? { area: Math.max(1, +src.area || updated[idx].area) }
-              : {}),
+            ...(updateAreasFromList ? { area: Math.max(1, +src.area || updated[idx].area) } : {}),
           };
           used.add(idx);
         } else {
           extras.push({
-            id: Math.random().toString(36).slice(2, 9),
+            id: uid(),
             name: src.name,
             area: Math.max(1, +src.area || 20),
             x: (Math.random() - 0.5) * 40,
             y: (Math.random() - 0.5) * 40,
+            fillType: bulkFillType,
             fill: bulkFillTransparent ? "none" : bulkFill,
+            grad0: bulkGrad0,
+            grad1: bulkGrad1,
+            gradAngle: bulkGradAngle,
             stroke: bulkStroke,
             strokeWidth: bulkStrokeWidth,
             textFont: bulkTextFont,
@@ -738,14 +745,8 @@ export default function BubbleAdjacencyApp() {
 
   function handleConnect(node) {
     if (mode !== "connect") return;
-    if (!linkSource) {
-      setLinkSource(node.id);
-      return;
-    }
-    if (linkSource === node.id) {
-      setLinkSource(null);
-      return;
-    }
+    if (!linkSource) { setLinkSource(node.id); return; }
+    if (linkSource === node.id) { setLinkSource(null); return; }
     pushHistory();
     setLinks((p) => [
       ...removePairLinks(p, linkSource, node.id),
@@ -759,7 +760,11 @@ export default function BubbleAdjacencyApp() {
     setNodes((prev) =>
       prev.map((n) => ({
         ...n,
+        fillType: bulkFillType,
         fill: bulkFillTransparent ? "none" : bulkFill,
+        grad0: bulkGrad0,
+        grad1: bulkGrad1,
+        gradAngle: bulkGradAngle,
         stroke: bulkStroke,
         strokeWidth: bulkStrokeWidth,
       }))
@@ -784,7 +789,11 @@ export default function BubbleAdjacencyApp() {
         selectedSet.has(n.id)
           ? {
               ...n,
+              fillType: bulkFillType,
               fill: bulkFillTransparent ? "none" : bulkFill,
+              grad0: bulkGrad0,
+              grad1: bulkGrad1,
+              gradAngle: bulkGradAngle,
               stroke: bulkStroke,
               strokeWidth: bulkStrokeWidth,
             }
@@ -823,9 +832,7 @@ export default function BubbleAdjacencyApp() {
     pushHistory();
     const set = new Set(selectedIds);
     setNodes((prev) => prev.filter((n) => !set.has(n.id)));
-    setLinks((prev) =>
-      prev.filter((l) => !set.has(l.source) && !set.has(l.target))
-    );
+    setLinks((prev) => prev.filter((l) => !set.has(l.source) && !set.has(l.target)));
     setSelectedIds([]);
     if (selectedNodeId && set.has(selectedNodeId)) setSelectedNodeId(null);
   }
@@ -837,8 +844,7 @@ export default function BubbleAdjacencyApp() {
   function svgToLocalPoint(svgEl, clientX, clientY) {
     if (!svgEl) return { x: clientX, y: clientY };
     const pt = svgEl.createSVGPoint();
-    pt.x = clientX;
-    pt.y = clientY;
+    pt.x = clientX; pt.y = clientY;
     const screenCTM = svgEl.getScreenCTM();
     if (!screenCTM) return { x: clientX, y: clientY };
     const loc = pt.matrixTransform(screenCTM.inverse());
@@ -851,7 +857,6 @@ export default function BubbleAdjacencyApp() {
 
   function onPointerDownNode(e, node) {
     e.stopPropagation();
-
     if (mode === "connect") return;
 
     // selection logic
@@ -872,9 +877,7 @@ export default function BubbleAdjacencyApp() {
     });
     groupDragRef.current = { ids, start: pt, startPos };
     dragStartSnapshotRef.current = snapshot();
-    try {
-      e.currentTarget.setPointerCapture?.(e.pointerId);
-    } catch {}
+    try { e.currentTarget.setPointerCapture?.(e.pointerId); } catch {}
     simRef.current?.alphaTarget(0.4).restart();
   }
 
@@ -891,8 +894,9 @@ export default function BubbleAdjacencyApp() {
     const { x, y } = svgToLocalPoint(svg, e.clientX, e.clientY);
     const dx = x - drag.start.x;
     const dy = y - drag.start.y;
-    setNodes((prev) =>
-      prev.map((n) =>
+    setNodes((prev) => {
+      // move dragged ids
+      const next = prev.map((n) =>
         drag.ids.includes(n.id)
           ? {
               ...n,
@@ -902,33 +906,28 @@ export default function BubbleAdjacencyApp() {
               fy: drag.startPos.get(n.id).y + dy,
             }
           : n
-      )
-    );
+      );
+      // ensure no overlaps even when physics is OFF
+      if (!physics) resolveCollisionsInPlace(next, drag.ids, 2);
+      return next;
+    });
   }
 
   function onPointerUp() {
     // lasso end?
-    if (lasso.active) {
-      finishLasso();
-      return;
-    }
+    if (lasso.active) { finishLasso(); return; }
     const drag = groupDragRef.current;
     if (!drag) return;
     // release fx/fy unless locked
     setNodes((prev) =>
       prev.map((n) =>
         drag.ids.includes(n.id)
-          ? {
-              ...n,
-              fx: n.locked ? (n.x ?? 0) : undefined,
-              fy: n.locked ? (n.y ?? 0) : undefined,
-            }
+          ? { ...n, fx: n.locked ? (n.x ?? 0) : undefined, fy: n.locked ? (n.y ?? 0) : undefined }
           : n
       )
     );
     groupDragRef.current = null;
-    if (dragStartSnapshotRef.current)
-      historyRef.current.push(dragStartSnapshotRef.current);
+    if (dragStartSnapshotRef.current) historyRef.current.push(dragStartSnapshotRef.current);
     dragStartSnapshotRef.current = null;
     simRef.current?.alphaTarget(0);
   }
@@ -936,18 +935,15 @@ export default function BubbleAdjacencyApp() {
   // --- Lasso selection (Shift + drag on background) --------------------------
   function onPointerDownSvg(e) {
     if (mode !== "select") return;
-    // If clicked directly on SVG (background) and holding Shift => start lasso
     if (e.shiftKey) {
       e.preventDefault();
       e.stopPropagation();
       const svg = svgRef.current;
       const p = svgToLocalPoint(svg, e.clientX, e.clientY);
-      // disable zoom during lasso
       const sel = d3.select(svg);
-      sel.on(".zoom", null);
+      sel.on(".zoom", null); // disable zoom during lasso
       setLasso({ active: true, points: [p] });
     } else {
-      // clicking background clears selection (no modifiers)
       if (!(e.ctrlKey || e.metaKey)) {
         setSelectedIds([]);
         setSelectedNodeId(null);
@@ -957,7 +953,6 @@ export default function BubbleAdjacencyApp() {
 
   function finishLasso() {
     const pts = lasso.points;
-    const dict = new Map(nodes.map((n) => [n.id, n]));
     const inside = [];
     for (const n of nodes) {
       const p = { x: n.x || 0, y: n.y || 0 };
@@ -979,46 +974,48 @@ export default function BubbleAdjacencyApp() {
   function changeArea(id, v) {
     pushHistory();
     const a = toNumber(v, 1);
-    setNodes((p) =>
-      p.map((n) => (n.id === id ? { ...n, area: Math.max(1, a) } : n))
-    );
+    setNodes((p) => p.map((n) => (n.id === id ? { ...n, area: Math.max(1, a) } : n)));
   }
   function setNodeFill(id, colorOrNone) {
     pushHistory();
-    setNodes((p) =>
-      p.map((n) => (n.id === id ? { ...n, fill: colorOrNone } : n))
-    );
+    setNodes((p) => p.map((n) => (n.id === id ? { ...n, fill: colorOrNone } : n)));
+  }
+  function setNodeFillType(id, t) {
+    pushHistory();
+    setNodes((p) => p.map((n) => (n.id === id ? { ...n, fillType: t } : n)));
+  }
+  function setNodeGrad0(id, c) {
+    pushHistory();
+    setNodes((p) => p.map((n) => (n.id === id ? { ...n, grad0: c } : n)));
+  }
+  function setNodeGrad1(id, c) {
+    pushHistory();
+    setNodes((p) => p.map((n) => (n.id === id ? { ...n, grad1: c } : n)));
+  }
+  function setNodeGradAngle(id, a) {
+    pushHistory();
+    setNodes((p) => p.map((n) => (n.id === id ? { ...n, gradAngle: +a || 0 } : n)));
   }
   function setNodeStroke(id, color) {
     pushHistory();
-    setNodes((p) =>
-      p.map((n) => (n.id === id ? { ...n, stroke: color } : n))
-    );
+    setNodes((p) => p.map((n) => (n.id === id ? { ...n, stroke: color } : n)));
   }
   function setNodeStrokeW(id, w) {
     pushHistory();
     const width = Math.max(1, Math.min(12, toNumber(w, 2)));
-    setNodes((p) =>
-      p.map((n) => (n.id === id ? { ...n, strokeWidth: width } : n))
-    );
+    setNodes((p) => p.map((n) => (n.id === id ? { ...n, strokeWidth: width } : n)));
   }
   function setNodeTextColor(id, c) {
     pushHistory();
-    setNodes((p) =>
-      p.map((n) => (n.id === id ? { ...n, textColor: c } : n))
-    );
+    setNodes((p) => p.map((n) => (n.id === id ? { ...n, textColor: c } : n)));
   }
   function setNodeTextSize(id, s) {
     pushHistory();
-    setNodes((p) =>
-      p.map((n) => (n.id === id ? { ...n, textSize: clampTextSize(s) } : n))
-    );
+    setNodes((p) => p.map((n) => (n.id === id ? { ...n, textSize: clampTextSize(s) } : n)));
   }
   function setNodeTextFont(id, f) {
     pushHistory();
-    setNodes((p) =>
-      p.map((n) => (n.id === id ? { ...n, textFont: f } : n))
-    );
+    setNodes((p) => p.map((n) => (n.id === id ? { ...n, textFont: f } : n)));
   }
   function setNodeLocked(id, flag) {
     pushHistory();
@@ -1059,6 +1056,16 @@ export default function BubbleAdjacencyApp() {
   useEffect(() => {
     const onKey = (e) => {
       const k = e.key;
+      // Typing guard: ignore when focused in input/textarea/etc
+      if (isTypingTarget(e.target)) {
+        // Allow Ctrl/Cmd+S inside inputs to save JSON
+        if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === "s") {
+          e.preventDefault();
+          saveJSON();
+        }
+        return;
+      }
+
       // Cheatsheet
       if (k === "?" || (k === "/" && e.shiftKey)) {
         e.preventDefault();
@@ -1068,60 +1075,57 @@ export default function BubbleAdjacencyApp() {
       // Undo/Redo/Save
       if (e.ctrlKey || e.metaKey) {
         const kk = k.toLowerCase();
-        if (kk === "z") {
-          e.preventDefault();
-          if (e.shiftKey) redo();
-          else undo();
-          return;
-        }
-        if (kk === "y") {
-          e.preventDefault();
-          redo();
-          return;
-        }
-        if (kk === "s") {
-          e.preventDefault();
-          saveJSON();
-          return;
-        }
+        if (kk === "z") { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
+        if (kk === "y") { e.preventDefault(); redo(); return; }
+        if (kk === "s") { e.preventDefault(); saveJSON(); return; }
       }
-      // Selection ops
-      if (k === "a" && (e.ctrlKey || e.metaKey)) {
+
+      // Quick link type switchers → auto-enter Connect mode
+      if (k === "1" || k.toLowerCase() === "n") {
         e.preventDefault();
-        selectAll();
+        setCurrentLineType("necessary");
+        setMode("connect");
         return;
       }
-      if (k === "Escape") {
-        clearSelection();
+      if (k === "2" || k.toLowerCase() === "i") {
+        e.preventDefault();
+        setCurrentLineType("ideal");
+        setMode("connect");
         return;
       }
+      if (k === "Tab") {
+        e.preventDefault();
+        setCurrentLineType((t) => (t === "necessary" ? "ideal" : "necessary"));
+        setMode("connect");
+        return;
+      }
+
+      // Selection ops
+      if (k === "a" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); selectAll(); return; }
+      if (k === "Escape") { clearSelection(); return; }
+
       // Delete: nodes or last-clicked link
       if (k === "Delete" || k === "Backspace") {
-        if (selectedIds.length) {
-          e.preventDefault();
-          deleteSelection();
-          return;
-        }
+        if (selectedIds.length) { e.preventDefault(); deleteSelection(); return; }
         const id = lastClickedLinkRef.current;
         if (id) {
           e.preventDefault();
           pushHistory();
           setLinks((p) => p.filter((l) => l.id !== id));
           lastClickedLinkRef.current = null;
+          return;
         }
       }
+
       // Arrow keys nudge selected nodes
-      if (
-        ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(k) &&
-        selectedIds.length
-      ) {
+      if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(k) && selectedIds.length) {
         e.preventDefault();
         const step = e.shiftKey ? 20 : 5;
         const dx = k === "ArrowLeft" ? -step : k === "ArrowRight" ? step : 0;
         const dy = k === "ArrowUp" ? -step : k === "ArrowDown" ? step : 0;
         pushHistory();
-        setNodes((prev) =>
-          prev.map((n) =>
+        setNodes((prev) => {
+          const next = prev.map((n) =>
             selectedSet.has(n.id)
               ? {
                   ...n,
@@ -1131,16 +1135,19 @@ export default function BubbleAdjacencyApp() {
                   fy: n.locked ? (n.y || 0) + dy : n.fy,
                 }
               : n
-          )
-        );
+          );
+          // if physics off, keep them separated
+          if (!physics) resolveCollisionsInPlace(next, selectedIds, 2);
+          return next;
+        });
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedIds, selectedSet]);
+  }, [selectedIds, selectedSet, physics]);
 
-  // ---------------------------- Scenes API -----------------------------------
+  // ---------------------------- Scenes API (unchanged core) ------------------
   function captureScenePayload() {
     const pos = {};
     for (const n of nodes) pos[n.id] = { x: n.x || 0, y: n.y || 0 };
@@ -1153,7 +1160,7 @@ export default function BubbleAdjacencyApp() {
   function addScene(name) {
     const nm = String(name || "").trim() || `Scene ${scenes.length + 1}`;
     const payload = captureScenePayload();
-    const s = { id: Math.random().toString(36).slice(2, 9), name: nm, ...payload };
+    const s = { id: uid(), name: nm, ...payload };
     setScenes((prev) => [...prev, s]);
     setActiveSceneId(s.id);
   }
@@ -1174,10 +1181,7 @@ export default function BubbleAdjacencyApp() {
         svg
           .transition()
           .duration(250)
-          .call(
-            zoomer.transform,
-            d3.zoomIdentity.translate(zoom.x, zoom.y).scale(zoom.k || 1)
-          );
+          .call(zoomer.transform, d3.zoomIdentity.translate(zoom.x, zoom.y).scale(zoom.k || 1));
       }
     } catch {}
     zeroVelocities();
@@ -1211,25 +1215,15 @@ export default function BubbleAdjacencyApp() {
     const clone = orig.cloneNode(true);
     const vb = orig.getAttribute("viewBox") || "-600 -350 1200 700";
     clone.setAttribute("viewBox", vb);
-    clone
-      .querySelectorAll("[data-ignore-export]")
-      .forEach((el) => el.remove());
+    clone.querySelectorAll("[data-ignore-export]").forEach((el) => el.remove());
     clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
     clone.setAttribute("xmlns:xlink", "http://www.w3.org/1999/xlink");
     clone.setAttribute("width", "1200");
     clone.setAttribute("height", "700");
     const bg = getExportBg();
     if (bg) {
-      const vbObj = clone.viewBox?.baseVal || {
-        x: -600,
-        y: -350,
-        width: 1200,
-        height: 700,
-      };
-      const rect = document.createElementNS(
-        "http://www.w3.org/2000/svg",
-        "rect"
-      );
+      const vbObj = clone.viewBox?.baseVal || { x: -600, y: -350, width: 1200, height: 700 };
+      const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
       rect.setAttribute("x", vbObj.x);
       rect.setAttribute("y", vbObj.y);
       rect.setAttribute("width", vbObj.width);
@@ -1247,9 +1241,7 @@ export default function BubbleAdjacencyApp() {
     const orig = svgRef.current;
     if (!orig) return;
     const clone = orig.cloneNode(true);
-    clone
-      .querySelectorAll("[data-ignore-export]")
-      .forEach((el) => el.remove());
+    clone.querySelectorAll("[data-ignore-export]").forEach((el) => el.remove());
     const svgStr = new XMLSerializer().serializeToString(clone);
     const img = new Image();
     const svg64 = btoa(unescape(encodeURIComponent(svgStr)));
@@ -1259,12 +1251,8 @@ export default function BubbleAdjacencyApp() {
       canvas.height = 1400;
       const ctx = canvas.getContext("2d");
       const bg = getExportBg();
-      if (bg) {
-        ctx.fillStyle = bg;
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-      } else {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-      }
+      if (bg) { ctx.fillStyle = bg; ctx.fillRect(0, 0, canvas.width, canvas.height); }
+      else { ctx.clearRect(0, 0, canvas.width, canvas.height); }
       const scale = Math.min(canvas.width / 1200, canvas.height / 700);
       const dx = (canvas.width - 1200 * scale) / 2;
       const dy = (canvas.height - 700 * scale) / 2;
@@ -1286,23 +1274,12 @@ export default function BubbleAdjacencyApp() {
       links,
       styles,
       bulk: {
-        bulkFill,
-        bulkFillTransparent,
-        bulkStroke,
-        bulkStrokeWidth,
-        bulkTextFont,
-        bulkTextColor,
-        bulkTextSize: clampTextSize(bulkTextSize),
+        bulkFill, bulkFillTransparent, bulkStroke, bulkStrokeWidth,
+        bulkTextFont, bulkTextColor, bulkTextSize: clampTextSize(bulkTextSize),
+        bulkFillType, bulkGrad0, bulkGrad1, bulkGradAngle, dynamicText,
       },
-      buffer,
-      arrowOverlap,
-      rotationSensitivity,
-      showMeasurements,
-      exportBgMode,
-      exportBgCustom,
-      liveBgMode,
-      liveBgCustom,
-      highContrast,
+      buffer, arrowOverlap, rotationSensitivity, showMeasurements,
+      exportBgMode, exportBgCustom, liveBgMode, liveBgCustom, highContrast,
     };
   }
 
@@ -1326,12 +1303,7 @@ export default function BubbleAdjacencyApp() {
       try {
         const handle = await window.showSaveFilePicker({
           suggestedName: "bubble-diagram.json",
-          types: [
-            {
-              description: "JSON files",
-              accept: { "application/json": [".json"] },
-            },
-          ],
+          types: [{ description: "JSON files", accept: { "application/json": [".json"] } }],
         });
         jsonHandleRef.current = handle;
         const writable = await handle.createWritable();
@@ -1342,10 +1314,9 @@ export default function BubbleAdjacencyApp() {
         console.warn("Save As cancelled or failed; using download() fallback.", err);
       }
     }
-    let name =
+    const name =
       typeof window !== "undefined"
-        ? window.prompt("File name", "bubble-diagram.json") ||
-          "bubble-diagram.json"
+        ? window.prompt("File name", "bubble-diagram.json") || "bubble-diagram.json"
         : "bubble-diagram.json";
     const blob = new Blob([JSON.stringify(buildExportPayload(), null, 2)], {
       type: "application/json",
@@ -1359,17 +1330,12 @@ export default function BubbleAdjacencyApp() {
       try {
         const [handle] = await window.showOpenFilePicker({
           multiple: false,
-          types: [
-            {
-              description: "JSON files",
-              accept: { "application/json": [".json"] },
-            },
-          ],
+          types: [{ description: "JSON files", accept: { "application/json": [".json"] } }],
         });
         if (!handle) return;
         const file = await handle.getFile();
         const text = await file.text();
-        jsonHandleRef.current = handle; // remember for "Save" back to same file
+        jsonHandleRef.current = handle; // remember for "Save"
         parseAndLoadJSON(text);
         return;
       } catch (err) {
@@ -1400,34 +1366,36 @@ export default function BubbleAdjacencyApp() {
           name: String(n.name ?? "Unnamed"),
           area: Math.max(1, toNumber(n.area, 20)),
           textSize: clampTextSize(n.textSize ?? bulkTextSize),
-          strokeWidth: Math.max(
-            1,
-            Math.min(12, toNumber(n.strokeWidth, bulkStrokeWidth))
-          ),
+          strokeWidth: Math.max(1, Math.min(12, toNumber(n.strokeWidth, bulkStrokeWidth))),
+          fillType: n.fillType || "solid",
+          grad0: n.grad0 || bulkGrad0,
+          grad1: n.grad1 || bulkGrad1,
+          gradAngle: typeof n.gradAngle === "number" ? n.gradAngle : bulkGradAngle,
         }));
         setNodes(normalized);
       }
-      if (Array.isArray(d.links))
-        setLinks(d.links.filter((l) => l.source && l.target));
+      if (Array.isArray(d.links)) setLinks(d.links.filter((l) => l.source && l.target));
       if (d.styles) setStyles((s) => ({ ...s, ...d.styles }));
       if (d.bulk) {
         const b = d.bulk;
         if (typeof b.bulkFill === "string") setBulkFill(b.bulkFill);
-        if (typeof b.bulkFillTransparent === "boolean")
-          setBulkFillTransparent(b.bulkFillTransparent);
+        if (typeof b.bulkFillTransparent === "boolean") setBulkFillTransparent(b.bulkFillTransparent);
         if (typeof b.bulkStroke === "string") setBulkStroke(b.bulkStroke);
-        if (typeof b.bulkStrokeWidth === "number")
-          setBulkStrokeWidth(Math.max(1, Math.min(12, b.bulkStrokeWidth)));
+        if (typeof b.bulkStrokeWidth === "number") setBulkStrokeWidth(Math.max(1, Math.min(12, b.bulkStrokeWidth)));
         if (typeof b.bulkTextFont === "string") setBulkTextFont(b.bulkTextFont);
         if (typeof b.bulkTextColor === "string") setBulkTextColor(b.bulkTextColor);
         if (b.bulkTextSize != null) setBulkTextSize(clampTextSize(b.bulkTextSize));
+
+        if (b.bulkFillType) setBulkFillType(b.bulkFillType);
+        if (b.bulkGrad0) setBulkGrad0(b.bulkGrad0);
+        if (b.bulkGrad1) setBulkGrad1(b.bulkGrad1);
+        if (typeof b.bulkGradAngle === "number") setBulkGradAngle(b.bulkGradAngle);
+        if (typeof b.dynamicText === "boolean") setDynamicText(b.dynamicText);
       }
       if (typeof d.buffer === "number") setBuffer(d.buffer);
       if (typeof d.arrowOverlap === "number") setArrowOverlap(d.arrowOverlap);
-      if (typeof d.rotationSensitivity === "number")
-        setRotationSensitivity(d.rotationSensitivity);
-      if (typeof d.showMeasurements === "boolean")
-        setShowMeasurements(d.showMeasurements);
+      if (typeof d.rotationSensitivity === "number") setRotationSensitivity(d.rotationSensitivity);
+      if (typeof d.showMeasurements === "boolean") setShowMeasurements(d.showMeasurements);
       if (d.exportBgMode) setExportBgMode(d.exportBgMode);
       if (d.exportBgCustom) setExportBgCustom(d.exportBgCustom);
       if (d.liveBgMode) setLiveBgMode(d.liveBgMode);
@@ -1438,67 +1406,12 @@ export default function BubbleAdjacencyApp() {
     }
   }
 
-  function importJSON(file) {
-    const r = new FileReader();
-    r.onload = () => {
-      try {
-        const d = JSON.parse(r.result);
-        if (Array.isArray(d.nodes)) {
-          const normalized = d.nodes.map((n) => ({
-            ...n,
-            id: n.id || uid(),
-            name: String(n.name ?? "Unnamed"),
-            area: Math.max(1, toNumber(n.area, 20)),
-            textSize: clampTextSize(n.textSize ?? bulkTextSize),
-            strokeWidth: Math.max(
-              1,
-              Math.min(12, toNumber(n.strokeWidth, bulkStrokeWidth))
-            ),
-          }));
-          setNodes(normalized);
-        }
-        if (Array.isArray(d.links))
-          setLinks(d.links.filter((l) => l.source && l.target));
-        if (d.styles) setStyles((s) => ({ ...s, ...d.styles }));
-        if (d.bulk) {
-          const b = d.bulk;
-          if (typeof b.bulkFill === "string") setBulkFill(b.bulkFill);
-          if (typeof b.bulkFillTransparent === "boolean")
-            setBulkFillTransparent(b.bulkFillTransparent);
-          if (typeof b.bulkStroke === "string") setBulkStroke(b.bulkStroke);
-          if (typeof b.bulkStrokeWidth === "number")
-            setBulkStrokeWidth(Math.max(1, Math.min(12, b.bulkStrokeWidth)));
-          if (typeof b.bulkTextFont === "string") setBulkTextFont(b.bulkTextFont);
-          if (typeof b.bulkTextColor === "string") setBulkTextColor(b.bulkTextColor);
-          if (b.bulkTextSize != null) setBulkTextSize(clampTextSize(b.bulkTextSize));
-        }
-        if (typeof d.buffer === "number") setBuffer(d.buffer);
-        if (typeof d.arrowOverlap === "number") setArrowOverlap(d.arrowOverlap);
-        if (typeof d.rotationSensitivity === "number")
-          setRotationSensitivity(d.rotationSensitivity);
-        if (d.exportBgMode) setExportBgMode(d.exportBgMode);
-        if (d.exportBgCustom) setExportBgCustom(d.exportBgCustom);
-        if (d.liveBgMode) setLiveBgMode(d.liveBgMode);
-        if (d.liveBgCustom) setLiveBgCustom(d.liveBgCustom);
-        if (typeof d.highContrast === "boolean") setHighContrast(d.highContrast);
-      } catch {
-        alert("Invalid JSON file");
-      }
-    };
-    r.readAsText(file);
-  }
-
   function zeroVelocities() {
     try {
       const sim = simRef.current;
       if (!sim) return;
       const arr = sim.nodes ? sim.nodes() : [];
-      if (Array.isArray(arr)) {
-        for (const n of arr) {
-          n.vx = 0;
-          n.vy = 0;
-        }
-      }
+      if (Array.isArray(arr)) for (const n of arr) { n.vx = 0; n.vy = 0; }
     } catch {}
   }
 
@@ -1512,11 +1425,7 @@ export default function BubbleAdjacencyApp() {
       simRef.current?.alpha(0.6).restart();
     }, 1200);
   }
-  useEffect(() => {
-    return () => {
-      if (explodeTORef.current) clearTimeout(explodeTORef.current);
-    };
-  }, []);
+  useEffect(() => () => { if (explodeTORef.current) clearTimeout(explodeTORef.current); }, []);
 
   // ---------------------------- Zoom / Pan / Fit -----------------------------
   useEffect(() => {
@@ -1524,9 +1433,7 @@ export default function BubbleAdjacencyApp() {
     const zoom = d3
       .zoom()
       .scaleExtent([0.2, 5])
-      .on("zoom", (event) => {
-        setZoomTransform(event.transform);
-      });
+      .on("zoom", (event) => { setZoomTransform(event.transform); });
     zoomBehaviorRef.current = zoom;
     svg.call(zoom);
     svg.on("dblclick.zoom", null);
@@ -1574,23 +1481,6 @@ export default function BubbleAdjacencyApp() {
       .transition()
       .duration(250)
       .call(zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(k));
-  }
-
-  // ---------------------------- Fullscreen -----------------------------------
-  const [isFullscreen, setIsFullscreen] = useState(false);
-  useEffect(() => {
-    const onFs = () => setIsFullscreen(!!document.fullscreenElement);
-    document.addEventListener("fullscreenchange", onFs);
-    return () => document.removeEventListener("fullscreenchange", onFs);
-  }, []);
-  function toggleFullscreen() {
-    const el = containerRef.current;
-    if (!el) return;
-    if (!document.fullscreenElement) {
-      el.requestFullscreen?.();
-    } else {
-      document.exitFullscreen?.();
-    }
   }
 
   // ---------------------------- Link helpers ---------------------------------
@@ -1647,7 +1537,6 @@ export default function BubbleAdjacencyApp() {
       .map((s) => s.trim())
       .filter(Boolean);
     for (const line of lines) {
-      // accept "A - B" or "A, B"
       const m = line.match(/^(.*?)\s*[-,]\s*(.*?)$/);
       if (!m) continue;
       const a = nByName.get(norm(m[1]));
@@ -1679,14 +1568,24 @@ export default function BubbleAdjacencyApp() {
     if (shape === "none") return undefined;
     return `url(#${markerId(kind, `${shape}-${type}`, st.color)})`;
   };
-  const selectedNode =
-    nodes.find((n) => n.id === selectedNodeId) || null;
+  const selectedNode = nodes.find((n) => n.id === selectedNodeId) || null;
 
   const liveBg = (function () {
     if (liveBgMode === "transparent") return "transparent";
     if (liveBgMode === "white") return "#ffffff";
     return liveBgCustom || THEME.surface;
   })();
+
+  // Dynamic label size helper
+  function labelPxForNode(n) {
+    const base = clampTextSize(n.textSize ?? bulkTextSize);
+    if (!dynamicText) return base;
+    const r = rOf(n.area);
+    // scale between ~0.8× and ~1.6× across radius range
+    const t = (r - BASE_R_MIN) / Math.max(1, (BASE_R_MAX - BASE_R_MIN));
+    const mult = 0.8 + t * 0.8;
+    return clampTextSize(base * mult);
+  }
 
   return (
     <div
@@ -1695,59 +1594,36 @@ export default function BubbleAdjacencyApp() {
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
     >
-      {/* Global styles: controls, scrollbars, selects */}
+      {/* Global styles */}
       <style data-ignore-export>{`
         :root { color-scheme: dark; }
         * { scrollbar-width: thin; scrollbar-color: #3a3a4a #121220; }
         *::-webkit-scrollbar { height: 10px; width: 10px; }
         *::-webkit-scrollbar-thumb { background: #3a3a4a; border-radius: 8px; }
         *::-webkit-scrollbar-track { background: #121220; }
-
         input[type="color"] {
-          -webkit-appearance: none;
-          appearance: none;
-          border: 1px solid ${THEME.border};
-          width: 32px; height: 28px;
-          border-radius: 9999px;
-          padding: 0;
-          background: transparent;
-          cursor: pointer;
+          -webkit-appearance: none; appearance: none; border: 1px solid ${THEME.border};
+          width: 32px; height: 28px; border-radius: 9999px; padding: 0; background: transparent; cursor: pointer;
         }
         input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; border-radius: 9999px; }
         input[type="color"]::-webkit-color-swatch { border: none; border-radius: 9999px; }
         input[type="color"]::-moz-color-swatch { border: none; border-radius: 9999px; }
-
         .ui-select{
-          background:#0f0f18;
-          color:#e6e6f0;
-          border:1px solid ${THEME.border};
-          border-radius:10px;
-          padding:6px 8px;
-          font-size:13px;
-          line-height:1.2;
+          background:#0f0f18; color:#e6e6f0; border:1px solid ${THEME.border};
+          border-radius:10px; padding:6px 8px; font-size:13px; line-height:1.2;
           box-shadow:0 6px 18px rgba(0,0,0,.35);
         }
         .ui-select:focus{ outline:3px solid ${highContrast ? "#00D1FF" : "#8b5cf6"}; outline-offset:2px; }
         .ui-select option{ background:#0f0f18; color:#e6e6f0; }
-        .ui-select option:checked,
-        .ui-select option:hover{ background:#1b1b2a !important; color:#fff !important; }
-
-        .card {
-          background:#121220; border:1px solid ${THEME.border};
-          border-radius:16px; padding:14px;
-        }
-        .group-title {
-          font-size:12px; letter-spacing:.06em; color:${THEME.subtle}; font-weight:600;
-        }
-        .btn {
-          border:1px solid ${THEME.border}; border-radius:12px; padding:8px 12px; font-size:13px;
-          background:transparent; color:${THEME.text};
-        }
+        .ui-select option:checked, .ui-select option:hover{ background:#1b1b2a !important; color:#fff !important; }
+        .card { background:#121220; border:1px solid ${THEME.border}; border-radius:16px; padding:14px; }
+        .group-title { font-size:12px; letter-spacing:.06em; color:${THEME.subtle}; font-weight:600; }
+        .btn { border:1px solid ${THEME.border}; border-radius:12px; padding:8px 12px; font-size:13px;
+               background:transparent; color:${THEME.text}; }
         .btn:hover { background:rgba(255,255,255,.06); }
         .btn:focus { outline:3px solid ${highContrast ? "#00D1FF" : "#8b5cf6"}; outline-offset:2px; }
         .btn-xs { padding:6px 10px; font-size:12px; border-radius:10px; }
         .dock-btn { width:38px; height:38px; display:flex; align-items:center; justify-content:center; border-radius:10px; }
-
         .hc .card { border-color:#8b5cf6; }
         .hc .btn:hover { background:rgba(255,255,255,.12); }
       `}</style>
@@ -1779,14 +1655,8 @@ export default function BubbleAdjacencyApp() {
             <button className="btn btn-xs" onClick={undo} aria-label="Undo">Undo</button>
             <button className="btn btn-xs" onClick={redo} aria-label="Redo">Redo</button>
             <button className="btn btn-xs" onClick={clearAll} aria-label="Clear all">Clear</button>
-            <button
-              className={`btn btn-xs ${highContrast ? "bg-white/10" : ""}`}
-              onClick={() => setHighContrast((v) => !v)}
-              aria-pressed={highContrast}
-              title="High-contrast mode"
-            >
-              HC
-            </button>
+            <button className={`btn btn-xs ${highContrast ? "bg-white/10" : ""}`}
+              onClick={() => setHighContrast((v) => !v)} aria-pressed={highContrast} title="High-contrast mode">HC</button>
             <button className="btn btn-xs" onClick={() => setShowHelp(true)} title="Cheatsheet (?)">?</button>
           </div>
         </div>
@@ -1801,17 +1671,12 @@ export default function BubbleAdjacencyApp() {
             <summary className="cursor-pointer select-none group-title">Instructions</summary>
             <div className="mt-3 text-sm leading-6 text-[#d9d9e6]">
               <ol className="list-decimal pl-5 space-y-2">
-                <li><b>Paste your spaces</b> in “Spaces” as <code>Name, area</code> then <b>Generate</b>.</li>
-                <li><b>Select</b> a bubble to edit. <b>Ctrl/⌘-click</b> or <b>Shift-click</b> to multi-select.</li>
-                <li><b>Lasso</b>: hold <b>Shift</b> and drag on background to select an area.</li>
-                <li><b>Group-drag</b>: drag any selected bubble to move the whole selection.</li>
-                <li>Use <b>Matrix</b> to add/remove adjacencies bidirectionally.</li>
-                <li><b>Conflicts</b>: paste expected “necessary” pairs and set long-link tolerance.</li>
-                <li>Arrows render <b>above</b> bubbles so arrowheads remain visible when overlapping.</li>
+                <li><b>Paste your spaces</b> then <b>Generate</b>.</li>
+                <li>Select bubbles to style; multi-select with Ctrl/⌘ or Shift.</li>
+                <li>Hold <b>Shift</b> and drag background for lasso.</li>
+                <li>Links: press <b>1/N</b> = Necessary, <b>2/I</b> = Ideal, or <b>Tab</b> to toggle — it auto-enables Connect mode.</li>
+                <li>Conflicts: paste expected “necessary” pairs, then click <b>Auto-connect all missing</b>.</li>
               </ol>
-              <div className="mt-3 text-xs text-[#9aa0a6]">
-                Shortcuts: <b>Ctrl/⌘+Z</b> undo • <b>Ctrl/⌘+Y</b> redo • <b>Delete</b> removes selection/link • <b>A</b> (Ctrl/⌘) select all • <b>Esc</b> clear • Arrows nudge • <b>?</b> cheatsheet.
-              </div>
             </div>
           </details>
 
@@ -1824,15 +1689,11 @@ export default function BubbleAdjacencyApp() {
                 <button className="btn btn-xs" onClick={onGenerate}>Generate</button>
                 <button className="btn btn-xs" onClick={updateFromList}>Update from list</button>
                 <label className="text-xs text-[#9aa0a6] flex items-center gap-1">
-                  <input type="checkbox"
-                    checked={updateMatchMode === "name"}
-                    onChange={(e) =>
-                      setUpdateMatchMode(e.target.checked ? "name" : "index")
-                    } /> match by name
+                  <input type="checkbox" checked={updateMatchMode === "name"}
+                    onChange={(e) => setUpdateMatchMode(e.target.checked ? "name" : "index")} /> match by name
                 </label>
                 <label className="text-xs text-[#9aa0a6] flex items-center gap-1">
-                  <input type="checkbox"
-                    checked={updateAreasFromList}
+                  <input type="checkbox" checked={updateAreasFromList}
                     onChange={(e) => setUpdateAreasFromList(e.target.checked)} /> also update areas
                 </label>
               </div>
@@ -1842,7 +1703,6 @@ export default function BubbleAdjacencyApp() {
                 value={rawList}
                 onChange={(e) => setRawList(e.target.value)}
               />
-              <p className="text-xs text-[#9aa0a6]">Formats: <code>name, area</code> • <code>name - area</code> • <code>name area</code></p>
             </div>
           </details>
 
@@ -1857,9 +1717,9 @@ export default function BubbleAdjacencyApp() {
                     <span className="capitalize">{key}</span>
                     <button
                       className={`btn btn-xs ${currentLineType === key ? "bg-white/10" : ""}`}
-                      onClick={() => setCurrentLineType(key)}
+                      onClick={() => { setCurrentLineType(key); setMode("connect"); }}
                     >
-                      Use
+                      Use & Connect
                     </button>
                   </div>
                   <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -1868,10 +1728,7 @@ export default function BubbleAdjacencyApp() {
                         type="color"
                         value={styles[key].color}
                         onChange={(e) =>
-                          setStyles((s) => ({
-                            ...s,
-                            [key]: { ...s[key], color: e.target.value },
-                          }))
+                          setStyles((s) => ({ ...s, [key]: { ...s[key], color: e.target.value } }))
                         }
                       />
                     </label>
@@ -1880,59 +1737,30 @@ export default function BubbleAdjacencyApp() {
                         type="checkbox"
                         checked={styles[key].dashed}
                         onChange={(e) =>
-                          setStyles((s) => ({
-                            ...s,
-                            [key]: { ...s[key], dashed: e.target.checked },
-                          }))
+                          setStyles((s) => ({ ...s, [key]: { ...s[key], dashed: e.target.checked } }))
                         }
                       /> dashed
                     </label>
                     <label className="flex items-center gap-1">w
                       <input
-                        type="number"
-                        min={1}
-                        max={12}
-                        value={styles[key].width}
+                        type="number" min={1} max={12} value={styles[key].width}
                         className="w-14 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
                         onChange={(e) =>
                           setStyles((s) => ({
                             ...s,
-                            [key]: {
-                              ...s[key],
-                              width: Math.max(1, Math.min(12, +e.target.value || 1)),
-                            },
+                            [key]: { ...s[key], width: Math.max(1, Math.min(12, +e.target.value || 1)) },
                           }))
                         }
                       />
                     </label>
-                    <select
-                      className="ui-select"
-                      value={styles[key].headStart}
-                      onChange={(e) =>
-                        setStyles((s) => ({
-                          ...s,
-                          [key]: { ...s[key], headStart: e.target.value },
-                        }))
-                      }
-                    >
-                      {HEAD_SHAPES.map((h) => (
-                        <option key={h} value={h}>{h}</option>
-                      ))}
+                    <select className="ui-select" value={styles[key].headStart}
+                      onChange={(e) => setStyles((s) => ({ ...s, [key]: { ...s[key], headStart: e.target.value } }))}>
+                      {HEAD_SHAPES.map((h) => (<option key={h} value={h}>{h}</option>))}
                     </select>
                     <span className="opacity-60">→</span>
-                    <select
-                      className="ui-select"
-                      value={styles[key].headEnd}
-                      onChange={(e) =>
-                        setStyles((s) => ({
-                          ...s,
-                          [key]: { ...s[key], headEnd: e.target.value },
-                        }))
-                      }
-                    >
-                      {HEAD_SHAPES.map((h) => (
-                        <option key={h} value={h}>{h}</option>
-                      ))}
+                    <select className="ui-select" value={styles[key].headEnd}
+                      onChange={(e) => setStyles((s) => ({ ...s, [key]: { ...s[key], headEnd: e.target.value } }))}>
+                      {HEAD_SHAPES.map((h) => (<option key={h} value={h}>{h}</option>))}
                     </select>
                   </div>
                 </div>
@@ -1943,83 +1771,85 @@ export default function BubbleAdjacencyApp() {
                 <div className="border border-[#2a2a3a] rounded-xl p-2">
                   <div className="text-xs opacity-80 mb-2">Bubbles (bulk)</div>
                   <div className="flex flex-wrap items-center gap-2 text-xs">
-                    <label className="flex items-center gap-1">Fill
-                      <input
-                        type="color"
-                        value={bulkFill}
-                        onChange={(e) => setBulkFill(e.target.value)}
-                        disabled={bulkFillTransparent}
-                      />
+                    <label className="flex items-center gap-2">
+                      Fill type
+                      <select className="ui-select" value={bulkFillType} onChange={(e) => setBulkFillType(e.target.value)}>
+                        <option value="solid">solid</option>
+                        <option value="gradient">gradient</option>
+                      </select>
                     </label>
-                    <label className="flex items-center gap-1">
-                      <input
-                        type="checkbox"
-                        checked={bulkFillTransparent}
-                        onChange={(e) => setBulkFillTransparent(e.target.checked)}
-                      /> transparent
-                    </label>
+                    {bulkFillType === "solid" ? (
+                      <>
+                        <label className="flex items-center gap-1">Fill
+                          <input type="color" value={bulkFill}
+                            onChange={(e) => setBulkFill(e.target.value)}
+                            disabled={bulkFillTransparent} />
+                        </label>
+                        <label className="flex items-center gap-1">
+                          <input
+                            type="checkbox"
+                            checked={bulkFillTransparent}
+                            onChange={(e) => setBulkFillTransparent(e.target.checked)}
+                          /> transparent
+                        </label>
+                      </>
+                    ) : (
+                      <>
+                        <label className="flex items-center gap-1">From
+                          <input type="color" value={bulkGrad0} onChange={(e) => setBulkGrad0(e.target.value)} />
+                        </label>
+                        <label className="flex items-center gap-1">To
+                          <input type="color" value={bulkGrad1} onChange={(e) => setBulkGrad1(e.target.value)} />
+                        </label>
+                        <label className="flex items-center gap-1">angle°
+                          <input
+                            type="number" className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
+                            value={bulkGradAngle} onChange={(e) => setBulkGradAngle(+e.target.value || 0)}
+                          />
+                        </label>
+                      </>
+                    )}
                     <label className="flex items-center gap-1">Border
-                      <input
-                        type="color"
-                        value={bulkStroke}
-                        onChange={(e) => setBulkStroke(e.target.value)}
-                      />
+                      <input type="color" value={bulkStroke} onChange={(e) => setBulkStroke(e.target.value)} />
                     </label>
                     <label className="flex items-center gap-1">w
                       <input
-                        type="number"
-                        min={1}
-                        max={12}
-                        value={bulkStrokeWidth}
+                        type="number" min={1} max={12} value={bulkStrokeWidth}
                         className="w-14 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
-                        onChange={(e) =>
-                          setBulkStrokeWidth(Math.max(1, Math.min(12, +e.target.value || 1)))
-                        }
+                        onChange={(e) => setBulkStrokeWidth(Math.max(1, Math.min(12, +e.target.value || 1)))}
                       />
                     </label>
-                    <button className="btn btn-xs" onClick={applyBulkBubbleStylesToAll}>
-                      Apply to all
-                    </button>
+                    <button className="btn btn-xs" onClick={applyBulkBubbleStylesToAll}>Apply to all</button>
                     <button className="btn btn-xs" onClick={applyBulkBubbleStylesToSelection} disabled={!selectedIds.length}>
                       Apply to selection
                     </button>
                   </div>
                 </div>
+
                 <div className="border border-[#2a2a3a] rounded-xl p-2">
                   <div className="text-xs opacity-80 mb-2">Labels (bulk)</div>
                   <div className="flex flex-wrap items-center gap-2 text-xs">
-                    <select
-                      className="ui-select"
-                      value={bulkTextFont}
-                      onChange={(e) => setBulkTextFont(e.target.value)}
-                    >
+                    <select className="ui-select" value={bulkTextFont} onChange={(e) => setBulkTextFont(e.target.value)}>
                       <option value={FONT_STACKS.Outfit}>Outfit</option>
                       <option value={FONT_STACKS.Inter}>Inter</option>
                       <option value={FONT_STACKS.Poppins}>Poppins</option>
                       <option value={FONT_STACKS.Roboto}>Roboto</option>
                       <option value={FONT_STACKS.System}>system-ui</option>
-                      <option value={FONT_STACKS.HelveticaNowCondensed}>
-                        Helvetica Now Condensed
-                      </option>
+                      <option value={FONT_STACKS.HelveticaNowCondensed}>Helvetica Now Condensed</option>
                     </select>
-                    <input
-                      type="color"
-                      value={bulkTextColor}
-                      onChange={(e) => setBulkTextColor(e.target.value)}
-                    />
+                    <input type="color" value={bulkTextColor} onChange={(e) => setBulkTextColor(e.target.value)} />
                     <label className="flex items-center gap-1">size
                       <input
-                        type="number"
-                        min={TEXT_MIN}
-                        max={TEXT_MAX}
-                        value={bulkTextSize}
+                        type="number" min={TEXT_MIN} max={TEXT_MAX} value={bulkTextSize}
                         className="w-14 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
                         onChange={(e) => setBulkTextSize(clampTextSize(e.target.value))}
                       />
                     </label>
-                    <button className="btn btn-xs" onClick={applyBulkTextStylesToAll}>
-                      Apply to all
-                    </button>
+                    <label className="flex items-center gap-2 ml-2">
+                      <input type="checkbox" checked={dynamicText} onChange={(e) => setDynamicText(e.target.checked)} />
+                      Dynamic label sizing
+                    </label>
+                    <button className="btn btn-xs" onClick={applyBulkTextStylesToAll}>Apply to all</button>
                     <button className="btn btn-xs" onClick={applyBulkTextStylesToSelection} disabled={!selectedIds.length}>
                       Apply to selection
                     </button>
@@ -2033,70 +1863,30 @@ export default function BubbleAdjacencyApp() {
                   <div className="text-xs opacity-80 mb-2">Export background</div>
                   <div className="flex flex-wrap items-center gap-2 text-xs">
                     <label className="flex items-center gap-1">
-                      <input
-                        type="radio"
-                        name="bg-exp"
-                        checked={exportBgMode === "transparent"}
-                        onChange={() => setExportBgMode("transparent")}
-                      /> transparent
+                      <input type="radio" name="bg-exp" checked={exportBgMode === "transparent"} onChange={() => setExportBgMode("transparent")} /> transparent
                     </label>
                     <label className="flex items-center gap-1">
-                      <input
-                        type="radio"
-                        name="bg-exp"
-                        checked={exportBgMode === "white"}
-                        onChange={() => setExportBgMode("white")}
-                      /> white
+                      <input type="radio" name="bg-exp" checked={exportBgMode === "white"} onChange={() => setExportBgMode("white")} /> white
                     </label>
                     <label className="flex items-center gap-1">
-                      <input
-                        type="radio"
-                        name="bg-exp"
-                        checked={exportBgMode === "custom"}
-                        onChange={() => setExportBgMode("custom")}
-                      /> custom
+                      <input type="radio" name="bg-exp" checked={exportBgMode === "custom"} onChange={() => setExportBgMode("custom")} /> custom
                     </label>
-                    <input
-                      type="color"
-                      value={exportBgCustom}
-                      onChange={(e) => setExportBgCustom(e.target.value)}
-                      disabled={exportBgMode !== "custom"}
-                    />
+                    <input type="color" value={exportBgCustom} onChange={(e) => setExportBgCustom(e.target.value)} disabled={exportBgMode !== "custom"} />
                   </div>
                 </div>
                 <div className="border border-[#2a2a3a] rounded-xl p-2">
                   <div className="text-xs opacity-80 mb-2">Live background</div>
                   <div className="flex flex-wrap items-center gap-2 text-xs">
                     <label className="flex items-center gap-1">
-                      <input
-                        type="radio"
-                        name="bg-live"
-                        checked={liveBgMode === "transparent"}
-                        onChange={() => setLiveBgMode("transparent")}
-                      /> transparent
+                      <input type="radio" name="bg-live" checked={liveBgMode === "transparent"} onChange={() => setLiveBgMode("transparent")} /> transparent
                     </label>
                     <label className="flex items-center gap-1">
-                      <input
-                        type="radio"
-                        name="bg-live"
-                        checked={liveBgMode === "white"}
-                        onChange={() => setLiveBgMode("white")}
-                      /> white
+                      <input type="radio" name="bg-live" checked={liveBgMode === "white"} onChange={() => setLiveBgMode("white")} /> white
                     </label>
                     <label className="flex items-center gap-1">
-                      <input
-                        type="radio"
-                        name="bg-live"
-                        checked={liveBgMode === "custom"}
-                        onChange={() => setLiveBgMode("custom")}
-                      /> custom
+                      <input type="radio" name="bg-live" checked={liveBgMode === "custom"} onChange={() => setLiveBgMode("custom")} /> custom
                     </label>
-                    <input
-                      type="color"
-                      value={liveBgCustom}
-                      onChange={(e) => setLiveBgCustom(e.target.value)}
-                      disabled={liveBgMode !== "custom"}
-                    />
+                    <input type="color" value={liveBgCustom} onChange={(e) => setLiveBgCustom(e.target.value)} disabled={liveBgMode !== "custom"} />
                   </div>
                 </div>
               </div>
@@ -2171,9 +1961,7 @@ export default function BubbleAdjacencyApp() {
                       <tr key={r.id} className="odd:bg-[#0f0f18] even:bg-[#121220]">
                         <td className="p-2 font-medium whitespace-nowrap">{r.name}</td>
                         {nodes.map((c) => {
-                          if (r.id === c.id) {
-                            return <td key={c.id} className="p-2 text-center opacity-40">—</td>;
-                          }
+                          if (r.id === c.id) return <td key={c.id} className="p-2 text-center opacity-40">—</td>;
                           const t = getLinkTypeBetween(r.id, c.id);
                           return (
                             <td key={c.id} className="p-1">
@@ -2223,6 +2011,26 @@ export default function BubbleAdjacencyApp() {
                       ))}
                     </ul>
                     {missingNecessary.length > 12 && <div className="opacity-60">…and more</div>}
+                    <div className="mt-2">
+                      <button
+                        className="btn btn-xs"
+                        onClick={() => {
+                          if (!missingNecessary.length) return;
+                          pushHistory();
+                          setLinks((prev) => {
+                            let next = [...prev];
+                            for (const m of missingNecessary) {
+                              // ensure only one link per pair, set to 'necessary'
+                              next = removePairLinks(next, m.a.id, m.b.id);
+                              next.push({ id: uid(), source: m.a.id, target: m.b.id, type: "necessary" });
+                            }
+                            return next;
+                          });
+                        }}
+                      >
+                        Auto-connect all missing (necessary)
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -2249,7 +2057,8 @@ export default function BubbleAdjacencyApp() {
               <button className="btn btn-xs" onClick={saveJSONAs}>Save As…</button>
               <button className="btn btn-xs" onClick={openJSON}>Open JSON…</button>
               <label className="btn btn-xs cursor-pointer">Import JSON
-                <input className="hidden" type="file" accept="application/json" onChange={(e) => e.target.files && importJSON(e.target.files[0])} />
+                <input className="hidden" type="file" accept="application/json"
+                  onChange={(e) => e.target.files && importJSON(e.target.files[0])} />
               </label>
               <button
                 className="btn btn-xs"
@@ -2292,51 +2101,74 @@ export default function BubbleAdjacencyApp() {
                       <InlineEditField label="Name" value={selectedNode.name} onChange={(v) => renameNode(selectedNode.id, v)} />
                       <InlineEditField label="Area (m²)" value={String(selectedNode.area)} onChange={(v) => changeArea(selectedNode.id, v)} />
                     </div>
+
+                    {/* Fill & border */}
                     <div className="flex items-center gap-3 flex-wrap">
-                      <label className="flex items-center gap-2">Fill
-                        <input
-                          type="color"
-                          value={selectedNode.fill === "none" ? "#000000" : selectedNode.fill}
-                          onChange={(e) => setNodeFill(selectedNode.id, e.target.value)}
-                          disabled={selectedNode.fill === "none"}
-                        />
-                      </label>
                       <label className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={selectedNode.fill === "none"}
-                          onChange={(e) =>
-                            setNodeFill(
-                              selectedNode.id,
-                              e.target.checked ? "none" : bulkFill
-                            )
-                          }
-                        /> transparent
+                        Fill type
+                        <select className="ui-select" value={selectedNode.fillType || "solid"}
+                          onChange={(e) => setNodeFillType(selectedNode.id, e.target.value)}>
+                          <option value="solid">solid</option>
+                          <option value="gradient">gradient</option>
+                        </select>
                       </label>
+
+                      {(selectedNode.fillType || "solid") === "solid" ? (
+                        <>
+                          <label className="flex items-center gap-2">Fill
+                            <input
+                              type="color"
+                              value={selectedNode.fill === "none" ? "#000000" : (selectedNode.fill || bulkFill)}
+                              onChange={(e) => setNodeFill(selectedNode.id, e.target.value)}
+                              disabled={selectedNode.fill === "none"}
+                            />
+                          </label>
+                          <label className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              checked={selectedNode.fill === "none"}
+                              onChange={(e) => setNodeFill(selectedNode.id, e.target.checked ? "none" : bulkFill)}
+                            /> transparent
+                          </label>
+                        </>
+                      ) : (
+                        <>
+                          <label className="flex items-center gap-2">From
+                            <input type="color" value={selectedNode.grad0 || bulkGrad0}
+                              onChange={(e) => setNodeGrad0(selectedNode.id, e.target.value)} />
+                          </label>
+                          <label className="flex items-center gap-2">To
+                            <input type="color" value={selectedNode.grad1 || bulkGrad1}
+                              onChange={(e) => setNodeGrad1(selectedNode.id, e.target.value)} />
+                          </label>
+                          <label className="flex items-center gap-1">angle°
+                            <input
+                              type="number" className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
+                              value={typeof selectedNode.gradAngle === "number" ? selectedNode.gradAngle : bulkGradAngle}
+                              onChange={(e) => setNodeGradAngle(selectedNode.id, e.target.value)}
+                            />
+                          </label>
+                        </>
+                      )}
+
                       <label className="flex items-center gap-2">Border
-                        <input
-                          type="color"
-                          value={selectedNode.stroke || bulkStroke}
-                          onChange={(e) => setNodeStroke(selectedNode.id, e.target.value)}
-                        />
+                        <input type="color" value={selectedNode.stroke || bulkStroke}
+                          onChange={(e) => setNodeStroke(selectedNode.id, e.target.value)} />
                       </label>
                       <label className="flex items-center gap-1">w
                         <input
-                          type="number"
-                          min={1}
-                          max={12}
+                          type="number" min={1} max={12}
                           value={selectedNode.strokeWidth ?? bulkStrokeWidth}
                           className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
                           onChange={(e) => setNodeStrokeW(selectedNode.id, e.target.value)}
                         />
                       </label>
                     </div>
+
+                    {/* Labels */}
                     <div className="flex items-center gap-3 flex-wrap">
-                      <select
-                        className="ui-select"
-                        value={selectedNode.textFont || bulkTextFont}
-                        onChange={(e) => setNodeTextFont(selectedNode.id, e.target.value)}
-                      >
+                      <select className="ui-select" value={selectedNode.textFont || bulkTextFont}
+                        onChange={(e) => setNodeTextFont(selectedNode.id, e.target.value)}>
                         <option value={FONT_STACKS.Outfit}>Outfit</option>
                         <option value={FONT_STACKS.Inter}>Inter</option>
                         <option value={FONT_STACKS.Poppins}>Poppins</option>
@@ -2344,28 +2176,28 @@ export default function BubbleAdjacencyApp() {
                         <option value={FONT_STACKS.System}>system-ui</option>
                         <option value={FONT_STACKS.HelveticaNowCondensed}>Helvetica Now Condensed (if available)</option>
                       </select>
-                      <input
-                        type="color"
-                        value={selectedNode.textColor || bulkTextColor}
-                        onChange={(e) => setNodeTextColor(selectedNode.id, e.target.value)}
-                      />
+                      <input type="color" value={selectedNode.textColor || bulkTextColor}
+                        onChange={(e) => setNodeTextColor(selectedNode.id, e.target.value)} />
                       <label className="flex items-center gap-1">size
                         <input
-                          type="number"
-                          min={TEXT_MIN}
-                          max={TEXT_MAX}
+                          type="number" min={TEXT_MIN} max={TEXT_MAX}
                           value={clampTextSize(selectedNode.textSize ?? bulkTextSize)}
                           className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
                           onChange={(e) => setNodeTextSize(selectedNode.id, e.target.value)}
                         />
                       </label>
                     </div>
+
                     <div className="flex gap-2 flex-wrap">
                       <button className="btn btn-xs" onClick={() => setSelectedNodeId(null)}>Done</button>
                       <button
                         className="btn btn-xs"
                         onClick={() => {
+                          setNodeFillType(selectedNode.id, bulkFillType);
                           setNodeFill(selectedNode.id, bulkFillTransparent ? "none" : bulkFill);
+                          setNodeGrad0(selectedNode.id, bulkGrad0);
+                          setNodeGrad1(selectedNode.id, bulkGrad1);
+                          setNodeGradAngle(selectedNode.id, bulkGradAngle);
                           setNodeStroke(selectedNode.id, bulkStroke);
                           setNodeStrokeW(selectedNode.id, bulkStrokeWidth);
                           setNodeTextFont(selectedNode.id, bulkTextFont);
@@ -2447,9 +2279,14 @@ export default function BubbleAdjacencyApp() {
                   const hi = hoverId === n.id || isSrc || selectedSet.has(n.id);
                   const labelFont = n.textFont || bulkTextFont;
                   const labelColor = n.textColor || bulkTextColor;
-                  const labelSize = clampTextSize(n.textSize ?? bulkTextSize);
-                  const areaSize = Math.max(TEXT_MIN, labelSize - 1);
+                  const labelSize = labelPxForNode(n);
+                  const areaSize = Math.max(TEXT_MIN, Math.round(labelSize - 1));
                   const warnMissing = missingNodeIdSet.has(n.id);
+                  const useGradient = (n.fillType || "solid") === "gradient";
+
+                  // gradient id per node
+                  const gradId = `grad-${n.id}`;
+
                   return (
                     <g
                       key={n.id}
@@ -2460,6 +2297,21 @@ export default function BubbleAdjacencyApp() {
                       onMouseLeave={() => setHoverId(null)}
                       style={{ cursor: mode === "connect" ? "crosshair" : "grab" }}
                     >
+                      {/* per-node gradient definition */}
+                      {useGradient && (
+                        <defs>
+                          <linearGradient
+                            id={gradId}
+                            x1="0%" y1="0%" x2="100%" y2="0%"
+                            gradientUnits="objectBoundingBox"
+                            gradientTransform={`rotate(${(typeof n.gradAngle === "number" ? n.gradAngle : bulkGradAngle) || 0} .5 .5)`}
+                          >
+                            <stop offset="0%" stopColor={n.grad0 || bulkGrad0} />
+                            <stop offset="100%" stopColor={n.grad1 || bulkGrad1} />
+                          </linearGradient>
+                        </defs>
+                      )}
+
                       {/* selection highlight ring */}
                       {selectedSet.has(n.id) && (
                         <circle r={r + 5} fill="none" stroke="#60a5fa" strokeWidth={2} strokeDasharray="5 4" opacity={0.9} />
@@ -2473,7 +2325,11 @@ export default function BubbleAdjacencyApp() {
                       {/* bubble */}
                       <circle
                         r={r}
-                        fill={n.fill ?? (bulkFillTransparent ? "none" : bulkFill)}
+                        fill={
+                          useGradient
+                            ? `url(#${gradId})`
+                            : (n.fill ?? (bulkFillTransparent ? "none" : bulkFill))
+                        }
                         stroke={hi ? styles.necessary.color : (n.stroke || bulkStroke)}
                         strokeWidth={n.strokeWidth ?? bulkStrokeWidth}
                       />
@@ -2570,15 +2426,12 @@ export default function BubbleAdjacencyApp() {
                   const s = nodes.find((n) => n.id === l.source);
                   const t = nodes.find((n) => n.id === l.target);
                   if (!s || !t) return null;
-                  const dx = t.x - s.x,
-                    dy = t.y - s.y;
+                  const dx = t.x - s.x, dy = t.y - s.y;
                   const dist = Math.hypot(dx, dy) || 1;
-                  const nx = dx / dist,
-                    ny = dy / dist;
-                  const rs = rOf(s.area),
-                    rt = rOf(t.area);
+                  const nx = dx / dist, ny = dy / dist;
+                  const rs = rOf(s.area), rt = rOf(t.area);
 
-                  // let arrow/line start & end move inside the circle by `arrowOverlap` (clamped per radius)
+                  // let arrow/line start & end move inside the circle by `arrowOverlap`
                   const insetS = Math.max(0, Math.min(arrowOverlap, rs - 2));
                   const insetT = Math.max(0, Math.min(arrowOverlap, rt - 6));
 
@@ -2601,10 +2454,7 @@ export default function BubbleAdjacencyApp() {
                     >
                       {/* main line */}
                       <line
-                        x1={x1}
-                        y1={y1}
-                        x2={x2}
-                        y2={y2}
+                        x1={x1} y1={y1} x2={x2} y2={y2}
                         stroke={st.color}
                         strokeWidth={st.width}
                         strokeDasharray={dashFor(l.type)}
@@ -2615,10 +2465,7 @@ export default function BubbleAdjacencyApp() {
                       {/* conflict overlay for long necessary */}
                       {isLong && l.type === "necessary" && (
                         <line
-                          x1={x1}
-                          y1={y1}
-                          x2={x2}
-                          y2={y2}
+                          x1={x1} y1={y1} x2={x2} y2={y2}
                           stroke="#ef4444"
                           strokeWidth={Math.max(2, st.width + 1)}
                           strokeDasharray="6 3"
@@ -2643,11 +2490,14 @@ export default function BubbleAdjacencyApp() {
               <div className="bg-black/35 backdrop-blur p-2 rounded-xl border border-[#2a2a3a] flex flex-col gap-2">
                 <button className="dock-btn btn" onClick={() => setPhysics((p) => !p)} title="Toggle physics" aria-label="Toggle physics">{physics ? "⏸" : "▶"}</button>
                 <button className="dock-btn btn" onClick={detanglePulse} title="De-tangle" aria-label="De-tangle">✺</button>
-                <button className="dock-btn btn" onClick={toggleFullscreen} title="Fullscreen" aria-label="Fullscreen">{isFullscreen ? "⤢" : "⤢"}</button>
+                <button className="dock-btn btn" onClick={toggleFullscreen} title="Fullscreen" aria-label="Fullscreen">⤢</button>
               </div>
+              {/* New: Export & JSON quick actions */}
               <div className="bg-black/35 backdrop-blur p-2 rounded-xl border border-[#2a2a3a] flex flex-col gap-2">
                 <button className="dock-btn btn" onClick={exportSVG} aria-label="Export SVG">SVG</button>
                 <button className="dock-btn btn" onClick={exportPNG} aria-label="Export PNG">PNG</button>
+                <button className="dock-btn btn" onClick={saveJSON} aria-label="Save JSON">💾</button>
+                <button className="dock-btn btn" onClick={openJSON} aria-label="Open JSON">📂</button>
               </div>
             </div>
 
@@ -2696,8 +2546,9 @@ export default function BubbleAdjacencyApp() {
                 <div><b>Ctrl/⌘+A</b>: Select all</div>
                 <div><b>Esc</b>: Clear selection</div>
                 <div><b>Arrows</b>: Nudge selected (Shift for x4)</div>
-                <div><b>Shift+Drag</b>: Lasso select</div>
-                <div><b>Double-click background</b>: Reset zoom</div>
+                <div><b>1</b> or <b>N</b>: Necessary (enter Connect)</div>
+                <div><b>2</b> or <b>I</b>: Ideal (enter Connect)</div>
+                <div><b>Tab</b>: Toggle link type (enter Connect)</div>
               </div>
             </div>
           </div>
@@ -2721,9 +2572,7 @@ function InlineEdit({ text, onChange, className }) {
         }}
         className={`pointer-events-auto select-none text-[11px] text-white/90 bg-transparent ${className}`}
         style={{ lineHeight: 1.2 }}
-      >
-        {/* double-click to edit (invisible overlay, label is the SVG text) */}
-      </div>
+      />
     );
   }
   return (
@@ -2731,15 +2580,9 @@ function InlineEdit({ text, onChange, className }) {
       autoFocus
       value={val}
       onChange={(e) => setVal(e.target.value)}
-      onBlur={() => {
-        onChange(val.trim());
-        setEditing(false);
-      }}
+      onBlur={() => { onChange(val.trim()); setEditing(false); }}
       onKeyDown={(e) => {
-        if (e.key === "Enter") {
-          onChange(val.trim());
-          setEditing(false);
-        }
+        if (e.key === "Enter") { onChange(val.trim()); setEditing(false); }
         if (e.key === "Escape") setEditing(false);
       }}
       className={`w-full pointer-events-auto bg-[#0f0f18] border border-[#2a2a3a] rounded-md px-2 py-1 text-[12px] text-white ${className}`}
@@ -2757,9 +2600,7 @@ function InlineEditField({ label, value, onChange }) {
         value={val}
         onChange={(e) => setVal(e.target.value)}
         onBlur={() => onChange(val)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") onChange(val);
-        }}
+        onKeyDown={(e) => { if (e.key === "Enter") onChange(val); }}
         className="bg-transparent border border-[#2a2a3a] rounded px-2 py-1 text-[12px] text-white"
       />
     </label>
@@ -2768,12 +2609,7 @@ function InlineEditField({ label, value, onChange }) {
 
 // --- Precise width-based SVG text wrapping (uses canvas measureText) ---------
 const _measureCtx = (() => {
-  try {
-    const c = document.createElement("canvas");
-    return c.getContext("2d");
-  } catch {
-    return null;
-  }
+  try { const c = document.createElement("canvas"); return c.getContext("2d"); } catch { return null; }
 })();
 
 function measureWidth(s, fontFamily, fontPx) {
@@ -2788,10 +2624,7 @@ function wrapToWidth(label, fontFamily, fontPx, maxWidth, maxLines = 5) {
   const words = String(label).split(/\s+/).filter(Boolean);
   const lines = [];
   let cur = "";
-
-  const pushLine = (s) => {
-    if (s) lines.push(s);
-  };
+  const pushLine = (s) => { if (s) lines.push(s); };
 
   for (let i = 0; i < words.length; i++) {
     const w = words[i];
@@ -2800,31 +2633,19 @@ function wrapToWidth(label, fontFamily, fontPx, maxWidth, maxLines = 5) {
         let buf = "";
         for (const ch of w) {
           if (measureWidth(buf + ch, fontFamily, fontPx) <= maxWidth) buf += ch;
-          else {
-            pushLine(buf);
-            buf = ch;
-          }
+          else { pushLine(buf); buf = ch; }
           if (lines.length >= maxLines) break;
         }
         cur = buf;
-      } else {
-        cur = w;
-      }
+      } else { cur = w; }
     } else {
-      if (measureWidth(cur + " " + w, fontFamily, fontPx) <= maxWidth) {
-        cur += " " + w;
-      } else {
-        pushLine(cur);
-        cur = w;
-      }
+      if (measureWidth(cur + " " + w, fontFamily, fontPx) <= maxWidth) cur += " " + w;
+      else { pushLine(cur); cur = w; }
     }
     if (lines.length >= maxLines) break;
   }
   if (lines.length < maxLines && cur) pushLine(cur);
-
-  if (lines.length > maxLines) {
-    return lines.slice(0, maxLines - 1).concat([lines[maxLines - 1] + "…"]);
-  }
+  if (lines.length > maxLines) return lines.slice(0, maxLines - 1).concat([lines[maxLines - 1] + "…"]);
   return lines;
 }
 
@@ -2833,14 +2654,9 @@ function wrapToWidth(label, fontFamily, fontPx, maxWidth, maxLines = 5) {
   try {
     const parsed = parseList("A, 10\nB 20\nC-30\nNoArea");
     console.assert(parsed.length === 4, "parseList length");
-    console.assert(
-      parsed[0].area === 10 && parsed[1].area === 20 && parsed[2].area === 30,
-      "parseList areas"
-    );
+    console.assert(parsed[0].area === 10 && parsed[1].area === 20 && parsed[2].area === 30, "parseList areas");
     const r = scaleRadius(parsed);
-    const r10 = r(10),
-      r20 = r(20),
-      r30 = r(30);
+    const r10 = r(10), r20 = r(20), r30 = r(30);
     console.assert(r10 <= r20 && r20 <= r30, "scaleRadius monotonic");
     console.assert(clampTextSize("16") === 16, "text size string→number");
     console.assert(clampTextSize(5) === TEXT_MIN, "text size min clamp");
