@@ -1,17 +1,16 @@
-// BubbleAdjacencyApp.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as d3 from "d3";
 
 /**
  * Bubble Diagram Builder – Force-directed (React + D3)
- * v4.8.1 — Framework matrix style integrated + minor fixes
+ * v4.8.0 — Triangle Matrix (angled labels) • Font match • Show/Hide
  *
- * • Triangle Adjacency Matrix styled like the reference framework:
- *   angled label tabs on the left + upper-triangle grid with circular markers.
- * • Labels share the same font as the bubble labels (bulkTextFont).
- * • Show/Hide toggle in the dock and in Layout & Physics.
- * • InlineEdit now displays its value when not editing (previously blank).
- * • Links (with arrowheads) render above bubbles.
+ * What’s new in 4.8.0
+ * • Triangle Adjacency Matrix drawn inside the same SVG canvas (below the bubbles).
+ * • Matrix labels use the same font as bubble labels (bulkTextFont).
+ * • Dock button “△” + checkbox in Layout & Physics to show/hide the triangle.
+ * • Cells styled like your sample: angled label tabs at left + upper-triangle grid with circular markers.
+ * • Click any cell to cycle: none → ideal → necessary → none (keeps links in sync).
  */
 
 const THEME = {
@@ -133,10 +132,21 @@ function MarkerDefs({ styles }) {
             />
           )}
           {shape === "circle" && (
-            <circle cx={kind === "end" ? 7 : 3} cy={3.5} r={3} fill={st.color} />
+            <circle
+              cx={kind === "end" ? 7 : 3}
+              cy={3.5}
+              r={3}
+              fill={st.color}
+            />
           )}
           {shape === "square" && (
-            <rect x={kind === "end" ? 3 : 1} y={1} width={6} height={6} fill={st.color} />
+            <rect
+              x={kind === "end" ? 3 : 1}
+              y={1}
+              width={6}
+              height={6}
+              fill={st.color}
+            />
           )}
           {shape === "diamond" && (
             <polygon
@@ -979,7 +989,7 @@ export default function BubbleAdjacencyApp() {
     );
   }
 
-  // Keyboard shortcuts (undo, etc.)
+  // Keyboard shortcuts (undo, etc.) — unchanged except omitted for brevity
   const lastClickedLinkRef = useRef(null);
   const [showHelp, setShowHelp] = useState(false);
   useEffect(() => {
@@ -1472,6 +1482,7 @@ export default function BubbleAdjacencyApp() {
       if (dist > base * longFactor) ids.add(l.id);
     }
     return ids;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodes, links, buffer, longFactor, rOf]);
 
   const missingNecessary = useMemo(() => {
@@ -1644,7 +1655,7 @@ export default function BubbleAdjacencyApp() {
             </div>
           </details>
 
-          {/* Styles */}
+          {/* Styles (unchanged UI but kept) */}
           <details open className="card">
             <summary className="cursor-pointer select-none group-title">Styles</summary>
             <div className="mt-3 space-y-3">
@@ -1702,21 +1713,14 @@ export default function BubbleAdjacencyApp() {
                         className="w-14 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
                         onChange={(e) => setBulkStrokeWidth(Math.max(1, Math.min(12, +e.target.value || 1)))} />
                     </label>
-                    <button
-                      className="btn btn-xs"
-                      onClick={() => {
-                        setNodes((prev) =>
-                          prev.map((n) => ({
-                            ...n,
-                            fill: bulkFillTransparent ? "none" : bulkFill,
-                            stroke: bulkStroke,
-                            strokeWidth: bulkStrokeWidth,
-                          }))
-                        );
-                      }}
-                    >
-                      Apply to all
-                    </button>
+                    <button className="btn btn-xs" onClick={() => {
+                      setNodes((prev) => prev.map((n) => ({
+                        ...n,
+                        fill: bulkFillTransparent ? "none" : bulkFill,
+                        stroke: bulkStroke,
+                        strokeWidth: bulkStrokeWidth,
+                      })));
+                    }}>Apply to all</button>
                   </div>
                 </div>
                 <div className="border border-[#2a2a3a] rounded-xl p-2">
@@ -1827,7 +1831,7 @@ export default function BubbleAdjacencyApp() {
             </div>
           </details>
 
-          {/* Editable MATRIX table */}
+          {/* Editable MATRIX table stays (for bulk editing) */}
           <details className="card">
             <summary className="cursor-pointer select-none group-title">Adjacency Matrix (editable table)</summary>
             <div className="mt-3 text-xs">
@@ -2018,7 +2022,7 @@ export default function BubbleAdjacencyApp() {
                         </text>
                       )}
 
-                      {/* Area inline editor */}
+                      {/* editors */}
                       <foreignObject x={-40} y={r - 22} width={80} height={26} data-ignore-export
                         style={{ pointerEvents: mode === "connect" ? "none" : "auto" }}>
                         <InlineEdit text={`${n.area}`} onChange={(val) => changeArea(n.id, val)} className="text-center" />
@@ -2085,7 +2089,7 @@ export default function BubbleAdjacencyApp() {
                   </g>
                 )}
 
-                {/* Triangle Adjacency Matrix (framework style) */}
+                {/* NEW: Triangle Adjacency Matrix (styled like your sample) */}
                 {showTriMatrix && nodes.length > 1 && (
                   <TriMatrix
                     nodes={nodes}
@@ -2173,7 +2177,7 @@ export default function BubbleAdjacencyApp() {
 
 // --- Triangle Matrix component (angled labels + upper-tri grid) --------------
 function TriMatrix({ nodes, getLinkTypeBetween, onCycle, liveBg, styles, fontFamily, theme }) {
-  // Layout constants (tuned to match the framework reference)
+  // Layout constants (tuned to match your reference look)
   const cell = 24;          // square size
   const labelH = 22;        // label tab height
   const fs = 12;            // label font size
@@ -2194,7 +2198,7 @@ function TriMatrix({ nodes, getLinkTypeBetween, onCycle, liveBg, styles, fontFam
 
   return (
     <g>
-      {/* Title on the right */}
+      {/* Title on the right, like sample */}
       <text
         x={gridX0 + (N - 1) * cell + 18}
         y={gridY0 - 10}
@@ -2305,11 +2309,8 @@ function InlineEdit({ text, onChange, className }) {
           setEditing(true);
         }}
         className={`pointer-events-auto select-none text-[11px] text-white/90 bg-transparent ${className}`}
-        style={{ lineHeight: 1.2, padding: "2px 4px", borderRadius: 6, border: "1px dashed transparent" }}
-        title="Double-click to edit"
-      >
-        {String(val)}
-      </div>
+        style={{ lineHeight: 1.2 }}
+      />
     );
   }
   return (
