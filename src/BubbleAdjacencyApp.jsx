@@ -4,9 +4,10 @@ import * as d3 from "d3";
 
 /**
  * Bubble Diagram Builder – Force-directed (React + D3)
- * v4.9.0 — Gradient fills • Floating JSON dock • Auto-connect in conflicts
+ * v4.9.1 — Gradient fills • Floating JSON dock • Auto-connect in conflicts
  *           Key toggles for link type → connect mode • No-overlap even w/ physics OFF
- *           Dynamic label sizing (global + per-node override) • Delete-in-input fix
+ *           Dynamic label sizing (global + per-node override + global scale) • Delete-in-input fix
+ *           Drag fix w/ zoom • Spin speed capped
  */
 
 const THEME = {
@@ -183,12 +184,16 @@ function savePresets(obj) {
 }
 
 // ------------------------- Custom spin force ---------------------------------
-function makeSpinForce(level /* 0..100 */) {
+// Limit spin so the canvas doesn't become dizzying
+function makeSpinForce(level /* 0..100 (capped internally) */) {
   let nodes = [];
   const base = 0.0002;
+  const maxLevel = 50; // hard cap
+
   function force(alpha) {
-    if (!level) return;
-    const k = base * level * alpha;
+    const lvl = Math.min(maxLevel, Math.max(0, level || 0));
+    if (!lvl) return;
+    const k = base * lvl * alpha;
     for (const n of nodes) {
       const x = n.x || 0,
         y = n.y || 0;
@@ -253,6 +258,7 @@ export default function BubbleAdjacencyApp() {
   // Labels
   const [showMeasurements, setShowMeasurements] = useState(true);
   const [autoLabelSize, setAutoLabelSize] = useState(true);
+  const [dynamicTextScale, setDynamicTextScale] = useState(1); // global scale for dynamic labels
 
   // A11y
   const [highContrast, setHighContrast] = useState(false);
@@ -348,6 +354,7 @@ export default function BubbleAdjacencyApp() {
     arrowOverlap,
     rotationSensitivity,
     autoLabelSize,
+    dynamicTextScale,
   });
   const pushHistory = () => {
     historyRef.current.push(snapshot());
@@ -364,6 +371,7 @@ export default function BubbleAdjacencyApp() {
     setArrowOverlap(prev.arrowOverlap ?? 0);
     setRotationSensitivity(prev.rotationSensitivity ?? 0);
     setAutoLabelSize(prev.autoLabelSize ?? true);
+    setDynamicTextScale(prev.dynamicTextScale ?? 1);
   }
   function redo() {
     if (!futureRef.current.length) return;
@@ -376,6 +384,7 @@ export default function BubbleAdjacencyApp() {
     setArrowOverlap(next.arrowOverlap ?? 0);
     setRotationSensitivity(next.rotationSensitivity ?? 0);
     setAutoLabelSize(next.autoLabelSize ?? true);
+    setDynamicTextScale(next.dynamicTextScale ?? 1);
   }
 
   // Presets / autosave
@@ -386,8 +395,12 @@ export default function BubbleAdjacencyApp() {
     if (typeof p.buffer === "number") setBuffer(p.buffer);
     if (typeof p.arrowOverlap === "number") setArrowOverlap(p.arrowOverlap);
     if (typeof p.rotationSensitivity === "number")
-      setRotationSensitivity(p.rotationSensitivity);
+      setRotationSensitivity(Math.max(0, Math.min(50, p.rotationSensitivity)));
     if (typeof p.autoLabelSize === "boolean") setAutoLabelSize(p.autoLabelSize);
+    if (typeof p.dynamicTextScale === "number")
+      setDynamicTextScale(
+        Math.max(0.5, Math.min(2, p.dynamicTextScale || 1))
+      );
     if (p.bulk) {
       const b = p.bulk;
       if (typeof b.bulkFill === "string") setBulkFill(b.bulkFill);
@@ -418,6 +431,7 @@ export default function BubbleAdjacencyApp() {
       arrowOverlap,
       rotationSensitivity,
       autoLabelSize,
+      dynamicTextScale,
       bulk: {
         bulkFill,
         bulkFillTransparent,
@@ -445,6 +459,7 @@ export default function BubbleAdjacencyApp() {
     arrowOverlap,
     rotationSensitivity,
     autoLabelSize,
+    dynamicTextScale,
     bulkFill,
     bulkFillTransparent,
     bulkStroke,
@@ -477,7 +492,16 @@ export default function BubbleAdjacencyApp() {
     }, 45000);
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodes, links, styles, buffer, rotationSensitivity, arrowOverlap, autoLabelSize]);
+  }, [
+    nodes,
+    links,
+    styles,
+    buffer,
+    rotationSensitivity,
+    arrowOverlap,
+    autoLabelSize,
+    dynamicTextScale,
+  ]);
 
   // Crash recovery prompt
   useEffect(() => {
@@ -869,18 +893,16 @@ export default function BubbleAdjacencyApp() {
   const groupDragRef = useRef(null);
   const dragStartSnapshotRef = useRef(null);
 
+  // Proper conversion of client pointer coords → local graph coords (honors zoom)
   function svgToLocalPoint(svgEl, clientX, clientY) {
     if (!svgEl) return { x: clientX, y: clientY };
     const pt = svgEl.createSVGPoint();
     pt.x = clientX;
     pt.y = clientY;
-    const screenCTM = svgEl.getScreenCTM();
-    if (!screenCTM) return { x: clientX, y: clientY };
-    const loc = pt.matrixTransform(screenCTM.inverse());
-    const inner = svgEl.querySelector("g#zoomable");
-    const innerCTM = inner?.getCTM();
-    if (!innerCTM) return { x: loc.x, y: loc.y };
-    const p = new DOMPoint(loc.x, loc.y).matrixTransform(innerCTM.inverse());
+    const inner = svgEl.querySelector("g#zoomable") || svgEl;
+    const ctm = inner.getScreenCTM();
+    if (!ctm) return { x: clientX, y: clientY };
+    const p = pt.matrixTransform(ctm.inverse());
     return { x: p.x, y: p.y };
   }
 
@@ -926,7 +948,7 @@ export default function BubbleAdjacencyApp() {
     const dx = x - drag.start.x;
     const dy = y - drag.start.y;
 
-    // Move selected nodes
+    // Move selected nodes following the cursor
     setNodes((prev) => {
       const next = prev.map((n) =>
         drag.ids.includes(n.id)
@@ -951,13 +973,13 @@ export default function BubbleAdjacencyApp() {
             if (b.id === id) continue;
             const rb = rOf(b.area);
             const minD = ra + rb + buffer;
-            const dx = (a.x || 0) - (b.x || 0);
-            const dy = (a.y || 0) - (b.y || 0);
-            let d = Math.hypot(dx, dy) || 1e-6;
+            const dx2 = (a.x || 0) - (b.x || 0);
+            const dy2 = (a.y || 0) - (b.y || 0);
+            let d = Math.hypot(dx2, dy2) || 1e-6;
             if (d < minD) {
-              const push = (minD - d) + 0.5;
-              const nx = dx / d;
-              const ny = dy / d;
+              const push = minD - d + 0.5;
+              const nx = dx2 / d;
+              const ny = dy2 / d;
               a.x = (a.x || 0) + nx * push;
               a.y = (a.y || 0) + ny * push;
               a.fx = a.x;
@@ -1146,7 +1168,12 @@ export default function BubbleAdjacencyApp() {
     setNodes((p) =>
       p.map((n) =>
         n.id === id
-          ? { ...n, textSize: clampTextSize(s), textSizeManual: true, autoText: false }
+          ? {
+              ...n,
+              textSize: clampTextSize(s),
+              textSizeManual: true,
+              autoText: false,
+            }
           : n
       )
     );
@@ -1482,6 +1509,7 @@ export default function BubbleAdjacencyApp() {
       arrowOverlap,
       rotationSensitivity,
       autoLabelSize,
+      dynamicTextScale,
       showMeasurements,
       exportBgMode,
       exportBgCustom,
@@ -1617,8 +1645,13 @@ export default function BubbleAdjacencyApp() {
       if (typeof d.buffer === "number") setBuffer(d.buffer);
       if (typeof d.arrowOverlap === "number") setArrowOverlap(d.arrowOverlap);
       if (typeof d.rotationSensitivity === "number")
-        setRotationSensitivity(d.rotationSensitivity);
-      if (typeof d.autoLabelSize === "boolean") setAutoLabelSize(d.autoLabelSize);
+        setRotationSensitivity(Math.max(0, Math.min(50, d.rotationSensitivity)));
+      if (typeof d.autoLabelSize === "boolean")
+        setAutoLabelSize(d.autoLabelSize);
+      if (typeof d.dynamicTextScale === "number")
+        setDynamicTextScale(
+          Math.max(0.5, Math.min(2, d.dynamicTextScale || 1))
+        );
       if (typeof d.showMeasurements === "boolean")
         setShowMeasurements(d.showMeasurements);
       if (d.exportBgMode) setExportBgMode(d.exportBgMode);
@@ -1815,10 +1848,11 @@ export default function BubbleAdjacencyApp() {
     return s;
   }, [missingNecessary]);
 
-  // Dynamic label size calculator
+  // Dynamic label size calculator (scaled globally)
   function dynamicLabelSizeForNode(n) {
     const r = rOf(n.area);
-    const base = Math.round(r / 3.2);
+    const raw = (r / 3.2) * dynamicTextScale;
+    const base = Math.round(raw);
     return clampTextSize(base);
   }
 
@@ -2172,6 +2206,23 @@ export default function BubbleAdjacencyApp() {
                       Apply to selection
                     </button>
                   </div>
+                  <div className="w-full flex items-center gap-2 mt-2 text-xs">
+                    <span className="opacity-70">Dynamic label scale</span>
+                    <input
+                      type="range"
+                      min={0.6}
+                      max={1.8}
+                      step={0.05}
+                      value={dynamicTextScale}
+                      onChange={(e) =>
+                        setDynamicTextScale(
+                          Math.max(0.6, Math.min(1.8, +e.target.value || 1))
+                        )
+                      }
+                      disabled={!autoLabelSize}
+                    />
+                    <span>{Math.round(dynamicTextScale * 100)}%</span>
+                  </div>
                 </div>
               </div>
 
@@ -2271,9 +2322,30 @@ export default function BubbleAdjacencyApp() {
               </div>
               <div className="flex items-center gap-2 text-xs">
                 <span className="opacity-70">Rotation sensitivity</span>
-                <input type="range" min={0} max={100} step={1} value={rotationSensitivity} onChange={(e) => setRotationSensitivity(+e.target.value)} />
-                <input type="number" min={0} max={100} value={rotationSensitivity} className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
-                  onChange={(e) => setRotationSensitivity(Math.max(0, Math.min(100, +e.target.value || 0)))} />
+                <input
+                  type="range"
+                  min={0}
+                  max={50}
+                  step={1}
+                  value={rotationSensitivity}
+                  onChange={(e) =>
+                    setRotationSensitivity(
+                      Math.max(0, Math.min(50, +e.target.value || 0))
+                    )
+                  }
+                />
+                <input
+                  type="number"
+                  min={0}
+                  max={50}
+                  value={rotationSensitivity}
+                  className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
+                  onChange={(e) =>
+                    setRotationSensitivity(
+                      Math.max(0, Math.min(50, +e.target.value || 0))
+                    )
+                  }
+                />
                 <span className="opacity-70">%</span>
               </div>
               <div className="flex items-center justify-between">
@@ -2564,7 +2636,7 @@ export default function BubbleAdjacencyApp() {
                           value={clampTextSize(selectedNode.textSize ?? bulkTextSize)}
                           className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
                           onChange={(e) => setNodeTextSize(selectedNode.id, e.target.value)}
-                          disabled={selectedNode.autoText}
+                          disabled={selectedNode.autoText && autoLabelSize}
                         />
                       </label>
                       <label className="flex items-center gap-1">
@@ -2660,23 +2732,33 @@ export default function BubbleAdjacencyApp() {
                   />
                 )}
 
-                {/* NODES (under) */}
+                {/* BUBBLES (under) */}
                 {nodes.map((n) => {
                   const r = rOf(n.area);
                   const isSrc = linkSource === n.id && mode === "connect";
                   const hi = hoverId === n.id || isSrc || selectedSet.has(n.id);
                   const labelFont = n.textFont || bulkTextFont;
                   const labelColor = n.textColor || bulkTextColor;
-                  const labelSize = n.autoText ?? autoLabelSize
+
+                  // global toggle can disable dynamic everywhere at once
+                  const useDynamic = autoLabelSize && (n.autoText !== false);
+                  const labelSize = useDynamic
                     ? dynamicLabelSizeForNode(n)
                     : clampTextSize(n.textSize ?? bulkTextSize);
-                  const areaSize = Math.max(TEXT_MIN, labelSize - 1);
+
+                  // area label stays stable and does NOT scale with dynamic text
+                  const areaSize = clampTextSize(bulkTextSize * 0.85);
+
                   const warnMissing = missingNodeIdSet.has(n.id);
 
                   // gradient coords from angle
                   const angle = (n.grad?.angle ?? bulkGradAngle) * (Math.PI / 180);
-                  const gx = Math.cos(angle), gy = Math.sin(angle);
-                  const x1 = -gx * r, y1 = -gy * r, x2 = gx * r, y2 = gy * r;
+                  const gx = Math.cos(angle),
+                    gy = Math.sin(angle);
+                  const x1 = -gx * r,
+                    y1 = -gy * r,
+                    x2 = gx * r,
+                    y2 = gy * r;
 
                   const fillType = n.fillType || "solid";
                   const solidFill = n.fill ?? (bulkFillTransparent ? "none" : bulkFill);
@@ -2711,12 +2793,26 @@ export default function BubbleAdjacencyApp() {
 
                       {/* selection ring */}
                       {selectedSet.has(n.id) && (
-                        <circle r={r + 5} fill="none" stroke="#60a5fa" strokeWidth={2} strokeDasharray="5 4" opacity={0.9} />
+                        <circle
+                          r={r + 5}
+                          fill="none"
+                          stroke="#60a5fa"
+                          strokeWidth={2}
+                          strokeDasharray="5 4"
+                          opacity={0.9}
+                        />
                       )}
 
                       {/* conflict halo */}
                       {warnMissing && (
-                        <circle r={r + 9} fill="none" stroke="#ef4444" strokeWidth={2} strokeDasharray="3 3" opacity={0.9} />
+                        <circle
+                          r={r + 9}
+                          fill="none"
+                          stroke="#ef4444"
+                          strokeWidth={2}
+                          strokeDasharray="3 3"
+                          opacity={0.9}
+                        />
                       )}
 
                       {/* bubble */}
@@ -2730,7 +2826,7 @@ export default function BubbleAdjacencyApp() {
 
                       {n.locked && <circle r={3} cx={r - 10} cy={-r + 10} fill="#22d3ee" />}
 
-                      {/* label */}
+                      {/* NAME LABEL (dynamic size) */}
                       <text
                         textAnchor="middle"
                         dominantBaseline="middle"
@@ -2765,6 +2861,7 @@ export default function BubbleAdjacencyApp() {
                         })()}
                       </text>
 
+                      {/* AREA LABEL — fixed text scale, not part of dynamic text */}
                       {showMeasurements && (
                         <text
                           y={r - 18}
@@ -2817,10 +2914,13 @@ export default function BubbleAdjacencyApp() {
                   const s = nodes.find((n) => n.id === l.source);
                   const t = nodes.find((n) => n.id === l.target);
                   if (!s || !t) return null;
-                  const dx = t.x - s.x, dy = t.y - s.y;
+                  const dx = t.x - s.x,
+                    dy = t.y - s.y;
                   const dist = Math.hypot(dx, dy) || 1;
-                  const nx = dx / dist, ny = dy / dist;
-                  const rs = rOf(s.area), rt = rOf(t.area);
+                  const nx = dx / dist,
+                    ny = dy / dist;
+                  const rs = rOf(s.area),
+                    rt = rOf(t.area);
 
                   const insetS = Math.max(0, Math.min(arrowOverlap, rs - 2));
                   const insetT = Math.max(0, Math.min(arrowOverlap, rt - 6));
@@ -2843,7 +2943,10 @@ export default function BubbleAdjacencyApp() {
                       onClick={() => (lastClickedLinkRef.current = l.id)}
                     >
                       <line
-                        x1={x1} y1={y1} x2={x2} y2={y2}
+                        x1={x1}
+                        y1={y1}
+                        x2={x2}
+                        y2={y2}
                         stroke={st.color}
                         strokeWidth={st.width}
                         strokeDasharray={dashFor(l.type)}
@@ -2853,7 +2956,10 @@ export default function BubbleAdjacencyApp() {
                       />
                       {isLong && l.type === "necessary" && (
                         <line
-                          x1={x1} y1={y1} x2={x2} y2={y2}
+                          x1={x1}
+                          y1={y1}
+                          x2={x2}
+                          y2={y2}
                           stroke="#ef4444"
                           strokeWidth={Math.max(2, st.width + 1)}
                           strokeDasharray="6 3"
@@ -2884,7 +2990,7 @@ export default function BubbleAdjacencyApp() {
                 <button className="dock-btn btn" onClick={exportSVG} aria-label="Export SVG">SVG</button>
                 <button className="dock-btn btn" onClick={exportPNG} aria-label="Export PNG">PNG</button>
               </div>
-              {/* NEW: floating JSON controls */}
+              {/* floating JSON controls */}
               <div className="bg-black/35 backdrop-blur p-2 rounded-xl border border-[#2a2a3a] flex flex-col gap-2">
                 <button className="dock-btn btn" onClick={openJSON} aria-label="Open JSON">OPEN</button>
                 <button className="dock-btn btn" onClick={saveJSON} aria-label="Save JSON">SAVE</button>
@@ -2926,6 +3032,7 @@ export default function BubbleAdjacencyApp() {
               {selectedNode && <span> • Editing: <span className="text-white">{selectedNode.name}</span></span>}
               <span> • Line: <span className="text-white capitalize">{currentLineType}</span></span>
               <span> • AutoText: <span className="text-white">{autoLabelSize ? "ON" : "OFF"}</span></span>
+              <span> • DynScale: <span className="text-white">{Math.round(dynamicTextScale * 100)}%</span></span>
             </div>
           </div>
 
@@ -2990,7 +3097,9 @@ function InlineEdit({ text, onChange, className }) {
         }}
         className={`pointer-events-auto select-none text-[11px] text-white/90 bg-transparent ${className}`}
         style={{ lineHeight: 1.2 }}
-      />
+      >
+        {text}
+      </div>
     );
   }
   return (
