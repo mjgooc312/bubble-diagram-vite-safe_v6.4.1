@@ -4,10 +4,9 @@ import * as d3 from "d3";
 
 /**
  * Bubble Diagram Builder – Force-directed (React + D3)
- * v4.9.2 — Gradient fills • Floating JSON dock • Auto-connect in conflicts
+ * v4.9.1 — Gradient fills • Floating JSON dock • Auto-connect in conflicts
  *           Key toggles for link type → connect mode • No-overlap even w/ physics OFF
- *           Dynamic label sizing (global scale) with hard OFF reset
- *           Separate fixed area-label size • Drag-lock button on canvas
+ *           Dynamic label sizing (global + per-node override + global scale) • Delete-in-input fix
  *           Drag fix w/ zoom • Spin speed capped
  */
 
@@ -247,9 +246,6 @@ export default function BubbleAdjacencyApp() {
   // Physics
   const [physics, setPhysics] = useState(true);
 
-  // Canvas drag-lock (prevents node dragging)
-  const [canvasLocked, setCanvasLocked] = useState(false);
-
   // Buffer between bubbles
   const [buffer, setBuffer] = useState(6);
 
@@ -263,7 +259,6 @@ export default function BubbleAdjacencyApp() {
   const [showMeasurements, setShowMeasurements] = useState(true);
   const [autoLabelSize, setAutoLabelSize] = useState(true);
   const [dynamicTextScale, setDynamicTextScale] = useState(1); // global scale for dynamic labels
-  const [areaLabelSize, setAreaLabelSize] = useState(11); // fixed size for area labels
 
   // A11y
   const [highContrast, setHighContrast] = useState(false);
@@ -360,7 +355,6 @@ export default function BubbleAdjacencyApp() {
     rotationSensitivity,
     autoLabelSize,
     dynamicTextScale,
-    areaLabelSize,
   });
   const pushHistory = () => {
     historyRef.current.push(snapshot());
@@ -378,7 +372,6 @@ export default function BubbleAdjacencyApp() {
     setRotationSensitivity(prev.rotationSensitivity ?? 0);
     setAutoLabelSize(prev.autoLabelSize ?? true);
     setDynamicTextScale(prev.dynamicTextScale ?? 1);
-    setAreaLabelSize(prev.areaLabelSize ?? 11);
   }
   function redo() {
     if (!futureRef.current.length) return;
@@ -392,10 +385,9 @@ export default function BubbleAdjacencyApp() {
     setRotationSensitivity(next.rotationSensitivity ?? 0);
     setAutoLabelSize(next.autoLabelSize ?? true);
     setDynamicTextScale(next.dynamicTextScale ?? 1);
-    setAreaLabelSize(next.areaLabelSize ?? 11);
   }
 
-  // Presets / autosave LOAD
+  // Presets / autosave
   useEffect(() => {
     const p = loadPresets();
     if (!p) return;
@@ -407,10 +399,8 @@ export default function BubbleAdjacencyApp() {
     if (typeof p.autoLabelSize === "boolean") setAutoLabelSize(p.autoLabelSize);
     if (typeof p.dynamicTextScale === "number")
       setDynamicTextScale(
-        Math.max(0.6, Math.min(1.8, p.dynamicTextScale || 1))
+        Math.max(0.5, Math.min(2, p.dynamicTextScale || 1))
       );
-    if (typeof p.areaLabelSize === "number")
-      setAreaLabelSize(clampTextSize(p.areaLabelSize));
     if (p.bulk) {
       const b = p.bulk;
       if (typeof b.bulkFill === "string") setBulkFill(b.bulkFill);
@@ -434,7 +424,6 @@ export default function BubbleAdjacencyApp() {
     if (p.liveBgCustom) setLiveBgCustom(p.liveBgCustom);
   }, []);
 
-  // Presets SAVE
   useEffect(() => {
     const payload = {
       styles,
@@ -443,7 +432,6 @@ export default function BubbleAdjacencyApp() {
       rotationSensitivity,
       autoLabelSize,
       dynamicTextScale,
-      areaLabelSize,
       bulk: {
         bulkFill,
         bulkFillTransparent,
@@ -472,7 +460,6 @@ export default function BubbleAdjacencyApp() {
     rotationSensitivity,
     autoLabelSize,
     dynamicTextScale,
-    areaLabelSize,
     bulkFill,
     bulkFillTransparent,
     bulkStroke,
@@ -514,7 +501,6 @@ export default function BubbleAdjacencyApp() {
     arrowOverlap,
     autoLabelSize,
     dynamicTextScale,
-    areaLabelSize,
   ]);
 
   // Crash recovery prompt
@@ -830,7 +816,6 @@ export default function BubbleAdjacencyApp() {
     );
   }
   function applyBulkTextStylesToAll() {
-    // FORCE one uniform size for all and disable per-node auto
     pushHistory();
     setNodes((prev) =>
       prev.map((n) => ({
@@ -838,8 +823,7 @@ export default function BubbleAdjacencyApp() {
         textFont: bulkTextFont,
         textColor: bulkTextColor,
         textSize: clampTextSize(bulkTextSize),
-        textSizeManual: true,
-        autoText: false,
+        textSizeManual: false,
       }))
     );
   }
@@ -877,8 +861,7 @@ export default function BubbleAdjacencyApp() {
               textFont: bulkTextFont,
               textColor: bulkTextColor,
               textSize: clampTextSize(bulkTextSize),
-              textSizeManual: true,
-              autoText: false,
+              textSizeManual: false,
             }
           : n
       )
@@ -926,14 +909,6 @@ export default function BubbleAdjacencyApp() {
   function onPointerDownNode(e, node) {
     e.stopPropagation();
 
-    // If canvas is locked: allow selection but no drag
-    if (canvasLocked) {
-      if (e.ctrlKey || e.metaKey || e.shiftKey) toggleSelect(node.id);
-      else if (!selectedSet.has(node.id)) selectOnly(node.id);
-      setSelectedNodeId(node.id);
-      return;
-    }
-
     if (mode === "connect") return;
 
     if (e.ctrlKey || e.metaKey || e.shiftKey) toggleSelect(node.id);
@@ -966,8 +941,6 @@ export default function BubbleAdjacencyApp() {
       setLasso((prev) => ({ active: true, points: [...prev.points, p] }));
       return;
     }
-    if (canvasLocked) return;
-
     const drag = groupDragRef.current;
     if (!drag) return;
     const svg = svgRef.current;
@@ -1025,8 +998,6 @@ export default function BubbleAdjacencyApp() {
       finishLasso();
       return;
     }
-    if (canvasLocked) return;
-
     const drag = groupDragRef.current;
     if (!drag) return;
     // release fx/fy unless locked
@@ -1539,7 +1510,6 @@ export default function BubbleAdjacencyApp() {
       rotationSensitivity,
       autoLabelSize,
       dynamicTextScale,
-      areaLabelSize,
       showMeasurements,
       exportBgMode,
       exportBgCustom,
@@ -1680,10 +1650,8 @@ export default function BubbleAdjacencyApp() {
         setAutoLabelSize(d.autoLabelSize);
       if (typeof d.dynamicTextScale === "number")
         setDynamicTextScale(
-          Math.max(0.6, Math.min(1.8, d.dynamicTextScale || 1))
+          Math.max(0.5, Math.min(2, d.dynamicTextScale || 1))
         );
-      if (typeof d.areaLabelSize === "number")
-        setAreaLabelSize(clampTextSize(d.areaLabelSize));
       if (typeof d.showMeasurements === "boolean")
         setShowMeasurements(d.showMeasurements);
       if (d.exportBgMode) setExportBgMode(d.exportBgMode);
@@ -1731,25 +1699,6 @@ export default function BubbleAdjacencyApp() {
       if (explodeTORef.current) clearTimeout(explodeTORef.current);
     };
   }, []);
-
-  // Global autoLabelSize behaviour:
-  // When turned ON: all nodes use autoText = true (dynamic).
-  // When turned OFF: all nodes switch autoText=false and textSize = bulkTextSize (uniform).
-  useEffect(() => {
-    setNodes((prev) =>
-      prev.map((n) =>
-        autoLabelSize
-          ? { ...n, autoText: true }
-          : {
-              ...n,
-              autoText: false,
-              textSize: clampTextSize(bulkTextSize),
-              textSizeManual: true,
-            }
-      )
-    );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoLabelSize, bulkTextSize]);
 
   // Zoom / Pan / Fit
   useEffect(() => {
@@ -2251,14 +2200,14 @@ export default function BubbleAdjacencyApp() {
                       /> Auto label size (global)
                     </label>
                     <button className="btn btn-xs" onClick={applyBulkTextStylesToAll}>
-                      Apply to all (fixed)
+                      Apply to all
                     </button>
                     <button className="btn btn-xs" onClick={applyBulkTextStylesToSelection} disabled={!selectedIds.length}>
-                      Apply to selection (fixed)
+                      Apply to selection
                     </button>
                   </div>
                   <div className="w-full flex items-center gap-2 mt-2 text-xs">
-                    <span className={`opacity-70 ${!autoLabelSize ? "line-through" : ""}`}>Dynamic label scale</span>
+                    <span className="opacity-70">Dynamic label scale</span>
                     <input
                       type="range"
                       min={0.6}
@@ -2273,34 +2222,6 @@ export default function BubbleAdjacencyApp() {
                       disabled={!autoLabelSize}
                     />
                     <span>{Math.round(dynamicTextScale * 100)}%</span>
-                  </div>
-                  <div className="w-full flex items-center gap-2 mt-2 text-xs">
-                    <span className="opacity-70">Area label size</span>
-                    <input
-                      type="range"
-                      min={8}
-                      max={18}
-                      step={1}
-                      value={areaLabelSize}
-                      onChange={(e) =>
-                        setAreaLabelSize(
-                          Math.max(8, Math.min(18, +e.target.value || 11))
-                        )
-                      }
-                    />
-                    <input
-                      type="number"
-                      min={8}
-                      max={18}
-                      value={areaLabelSize}
-                      className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
-                      onChange={(e) =>
-                        setAreaLabelSize(
-                          Math.max(8, Math.min(18, +e.target.value || 11))
-                        )
-                      }
-                    />
-                    <span className="opacity-70">px</span>
                   </div>
                 </div>
               </div>
@@ -2819,13 +2740,15 @@ export default function BubbleAdjacencyApp() {
                   const labelFont = n.textFont || bulkTextFont;
                   const labelColor = n.textColor || bulkTextColor;
 
-                  // Use dynamic only if global auto is ON and node autoText is true
-                  const useDynamic = autoLabelSize && n.autoText;
+                  // global toggle can disable dynamic everywhere at once
+                  const useDynamic = autoLabelSize && (n.autoText !== false);
                   const labelSize = useDynamic
                     ? dynamicLabelSizeForNode(n)
                     : clampTextSize(n.textSize ?? bulkTextSize);
 
-                  const areaSize = clampTextSize(areaLabelSize);
+                  // area label stays stable and does NOT scale with dynamic text
+                  const areaSize = clampTextSize(bulkTextSize * 0.85);
+
                   const warnMissing = missingNodeIdSet.has(n.id);
 
                   // gradient coords from angle
@@ -2849,7 +2772,7 @@ export default function BubbleAdjacencyApp() {
                       onClick={() => handleConnect(n)}
                       onMouseEnter={() => setHoverId(n.id)}
                       onMouseLeave={() => setHoverId(null)}
-                      style={{ cursor: mode === "connect" ? "crosshair" : canvasLocked ? "default" : "grab" }}
+                      style={{ cursor: mode === "connect" ? "crosshair" : "grab" }}
                     >
                       {/* per-node gradient defs */}
                       {useGradient && (
@@ -2938,7 +2861,7 @@ export default function BubbleAdjacencyApp() {
                         })()}
                       </text>
 
-                      {/* AREA LABEL — fixed text size, fully independent from dynamic */}
+                      {/* AREA LABEL — fixed text scale, not part of dynamic text */}
                       {showMeasurements && (
                         <text
                           y={r - 18}
@@ -3050,7 +2973,7 @@ export default function BubbleAdjacencyApp() {
               </g>
             </svg>
 
-            {/* Floating dock (zoom/physics/export/json/lock) */}
+            {/* Floating dock (zoom/physics/export/json) */}
             <div className="absolute right-3 top-3 flex flex-col gap-2" data-ignore-export>
               <div className="bg-black/35 backdrop-blur p-2 rounded-xl border border-[#2a2a3a] flex flex-col gap-2">
                 <button className="dock-btn btn" title="Zoom out" onClick={zoomOut} aria-label="Zoom out">−</button>
@@ -3059,17 +2982,7 @@ export default function BubbleAdjacencyApp() {
                 <button className="dock-btn btn" title="Zoom in" onClick={zoomIn} aria-label="Zoom in">＋</button>
               </div>
               <div className="bg-black/35 backdrop-blur p-2 rounded-xl border border-[#2a2a3a] flex flex-col gap-2">
-                <button
-                  className={`dock-btn btn ${canvasLocked ? "bg-white/10" : ""}`}
-                  onClick={() => setCanvasLocked((v) => !v)}
-                  title="Lock/unlock dragging bubbles (layout lock)"
-                  aria-label="Lock layout"
-                >
-                  {canvasLocked ? "🔒" : "🔓"}
-                </button>
-                <button className="dock-btn btn" onClick={() => setPhysics((p) => !p)} title="Toggle physics" aria-label="Toggle physics">
-                  {physics ? "⏸" : "▶"}
-                </button>
+                <button className="dock-btn btn" onClick={() => setPhysics((p) => !p)} title="Toggle physics" aria-label="Toggle physics">{physics ? "⏸" : "▶"}</button>
                 <button className="dock-btn btn" onClick={detanglePulse} title="De-tangle" aria-label="De-tangle">✺</button>
                 <button className="dock-btn btn" onClick={toggleFullscreen} title="Fullscreen" aria-label="Fullscreen">{isFullscreen ? "⤢" : "⤢"}</button>
               </div>
@@ -3120,7 +3033,6 @@ export default function BubbleAdjacencyApp() {
               <span> • Line: <span className="text-white capitalize">{currentLineType}</span></span>
               <span> • AutoText: <span className="text-white">{autoLabelSize ? "ON" : "OFF"}</span></span>
               <span> • DynScale: <span className="text-white">{Math.round(dynamicTextScale * 100)}%</span></span>
-              <span> • Lock: <span className="text-white">{canvasLocked ? "ON" : "OFF"}</span></span>
             </div>
           </div>
 
