@@ -3,12 +3,20 @@ import * as d3 from "d3";
 
 /**
  * Bubble Diagram Builder – Force-directed (React + D3)
- * v4.5a — Arrows above bubbles (layering fix) + Detangle pulse + Connect-mode click fix + Readability tweaks
+ * v4.7.0 — v1.0 label • Multi-select + Lasso • Pin/Lock • Adjacency Matrix • Conflict detector
+ * Autosave/Recovery • Keyboard Cheatsheet (?) • High-contrast mode • Arrow layer above bubbles
+ * Legend toggle (draggable, included in export) • Triangular Dot Matrix (synced)
  *
- * • Arrows (links) now render ABOVE bubble circles but BELOW labels/editors.
- * • “De-tangle (explode→shrink)” button to separate connected bubbles.
- * • Connect mode: editors don’t block clicks; dragging disabled while connecting.
- * • High-contrast dropdowns (class .ui-select) for dark UI.
+ * New in this build:
+ * 1) "v1.0" label in header next to title.
+ * 2) Multi-select + lasso (Shift+drag on background). Move as a group; style or delete many.
+ * 3) Lock/Pin nodes (per-node or bulk for selection). Locked nodes are fixed against physics.
+ * 4) Adjacency Matrix (editable) + Triangular Dot Matrix (click-to-cycle).
+ * 5) Conflict detector: expected "necessary" pairs + long-link warnings with highlight overlay.
+ * 6) Autosave every 45s to localStorage + quick restore on load.
+ * 7) Keyboard cheatsheet overlay with '?' (or Shift+/). Also: A=Select all, Esc=Clear, Arrows=Nudge.
+ * 8) Accessibility: High-contrast mode toggle, bigger focus rings, keyboardable operations.
+ * 9) Legend toggle: draggable legend lives in the SVG (export-safe) and mirrors your styles.
  */
 
 // ---- Theme (UI chrome only; not the canvas background) ----------------------
@@ -50,24 +58,18 @@ Player Warm-up Pods (Concourse), 130`;
 
 // ----- Utilities -------------------------------------------------------------
 const uid = () => Math.random().toString(36).slice(2, 9);
-
-/** Coerce to finite number, else fallback */
+const pairKey = (a, b) => (a < b ? `${a}|${b}` : `${b}|${a}`);
 function toNumber(v, fallback) {
   const n = typeof v === "string" && v.trim() === "" ? NaN : Number(v);
   return Number.isFinite(n) ? n : fallback;
 }
-// normalize a label for name-based matching
 function norm(s) {
   return String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
 }
-
-/** Clamp text size into safe range and coerce to number */
 function clampTextSize(v) {
   const n = toNumber(v, 12);
   return Math.max(TEXT_MIN, Math.min(TEXT_MAX, n));
 }
-
-/** Parse "Name, 120" / "Name - 120" / "Name 120" */
 function parseList(text) {
   return text
     .split(/\r?\n/)
@@ -80,8 +82,6 @@ function parseList(text) {
         : { id: uid(), name: line, area: 20 };
     });
 }
-
-/** sqrt(area) → [BASE_R_MIN, BASE_R_MAX] */
 function scaleRadius(nodes) {
   const sqrtAreas = nodes.map((n) => Math.sqrt(Math.max(1, n.area || 1)));
   const min = d3.min(sqrtAreas) ?? 1;
@@ -92,8 +92,6 @@ function scaleRadius(nodes) {
     return BASE_R_MIN + ((v - min) / (max - min)) * (BASE_R_MAX - BASE_R_MIN);
   };
 }
-
-// ----- Robust download helper (export SVG/PNG/JSON) -------------------------
 function download(url, filename) {
   try {
     const a = document.createElement("a");
@@ -119,6 +117,10 @@ const sanitizeColorId = (c) => String(c).replace(/[^a-zA-Z0-9]/g, "");
 const markerId = (kind, shape, color) =>
   `m-${kind}-${shape}-${sanitizeColorId(color)}`;
 
+// --- Relations (for dot matrix + matrix table)
+const REL_STATES = ["none", "ideal", "necessary"];
+const cycleRel = (t) => REL_STATES[(REL_STATES.indexOf(t) + 1) % REL_STATES.length];
+
 function MarkerDefs({ styles }) {
   const defs = [];
   ["necessary", "ideal"].forEach((k) => {
@@ -140,44 +142,27 @@ function MarkerDefs({ styles }) {
         >
           {shape === "arrow" && (
             <polygon
-              points={kind === "end" ? "0 0, 10 3.5, 0 7" : "10 0, 0 3.5, 10 7"}
-              fill={st.color}
-            />
-          )}
-          {shape === "circle" && (
-            <circle
-              cx={kind === "end" ? 7 : 3}
-              cy={3.5}
-              r={3}
-              fill={st.color}
-            />
-          )}
-          {shape === "square" && (
-            <rect
-              x={kind === "end" ? 3 : 1}
-              y={1}
-              width={6}
-              height={6}
-              fill={st.color}
-            />
-          )}
-          {shape === "diamond" && (
-            <polygon
-              points="3.5 0, 7 3.5, 3.5 7, 0 3.5"
-              transform={
-                kind === "end" ? "translate(3,0)" : "translate(1,0)"
+              points={
+                kind === "end" ? "0 0, 10 3.5, 0 7" : "10 0, 0 3.5, 10 7"
               }
               fill={st.color}
             />
           )}
-          {shape === "bar" && (
-            <rect
-              x={kind === "end" ? 7.5 : 1.5}
-              y={0.5}
-              width={1.5}
-              height={6.5}
+          {shape === "circle" && (
+            <circle cx={kind === "end" ? 7 : 3} cy={3.5} r={3} fill={st.color} />
+          )}
+          {shape === "square" && (
+            <rect x={kind === "end" ? 3 : 1} y={1} width={6} height={6} fill={st.color} />
+          )}
+          {shape === "diamond" && (
+            <polygon
+              points="3.5 0, 7 3.5, 3.5 7, 0 3.5"
+              transform={kind === "end" ? "translate(3,0)" : "translate(1,0)"}
               fill={st.color}
             />
+          )}
+          {shape === "bar" && (
+            <rect x={kind === "end" ? 7.5 : 1.5} y={0.5} width={1.5} height={6.5} fill={st.color} />
           )}
         </marker>
       );
@@ -188,6 +173,7 @@ function MarkerDefs({ styles }) {
 
 // ------------------------- Persistence (localStorage) ------------------------
 const LS_KEY = "bubbleBuilder:v1";
+const AUTOSAVE_KEY = "bubbleBuilder:autosave";
 function loadPresets() {
   try {
     return JSON.parse(localStorage.getItem(LS_KEY) || "{}");
@@ -211,7 +197,6 @@ function makeSpinForce(level /* 0..100 */) {
     for (const n of nodes) {
       const x = n.x || 0,
         y = n.y || 0;
-      // tangential velocity: (-y, x)
       n.vx += -y * k;
       n.vy += x * k;
     }
@@ -222,11 +207,34 @@ function makeSpinForce(level /* 0..100 */) {
   return force;
 }
 
+// --- Geometry helpers --------------------------------------------------------
+function pointInPolygon(p, poly) {
+  // ray-casting
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i].x,
+      yi = poly[i].y;
+    const xj = poly[j].x,
+      yj = poly[j].y;
+    const intersect =
+      yi > p.y !== yj > p.y &&
+      p.x <
+        ((xj - xi) * (p.y - yi)) / (yj - yi + (yj === yi ? 1e-9 : 0)) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
 // ----- Main App --------------------------------------------------------------
 export default function BubbleAdjacencyApp() {
   // Graph data
   const [nodes, setNodes] = useState([]);
   const [links, setLinks] = useState([]);
+
+  // Selection (multi-select + lasso)
+  const [selectedIds, setSelectedIds] = useState([]);
+  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const [lasso, setLasso] = useState({ active: false, points: [] });
 
   // UI state
   const [rawList, setRawList] = useState("");
@@ -242,18 +250,30 @@ export default function BubbleAdjacencyApp() {
   // Buffer between bubbles
   const [buffer, setBuffer] = useState(6);
 
-  // arrows can overlap into the circles — in pixels
-  const [arrowOverlap, setArrowOverlap] = useState(0); // 0..40+
+  // Arrow overlap into the circles — in pixels
+  const [arrowOverlap, setArrowOverlap] = useState(0);
 
   // rotation sensitivity (adds a light "spin" force)
-  const [rotationSensitivity, setRotationSensitivity] = useState(0); // 0..100
+  const [rotationSensitivity, setRotationSensitivity] = useState(0);
   const [showMeasurements, setShowMeasurements] = useState(true);
 
+  // High-contrast accessibility
+  const [highContrast, setHighContrast] = useState(false);
+
+  // Legend
+  const [showLegend, setShowLegend] = useState(true);
+  const [legendPos, setLegendPos] = useState({ x: -560, y: -320 });
+  const legendDragRef = useRef(null);
+
+  // Conflict detector inputs
+  const [expectedPairsText, setExpectedPairsText] = useState("");
+  const [longFactor, setLongFactor] = useState(1.8);
+
   // detangle pulse (explode → shrink)
-  const [explodeFactor, setExplodeFactor] = useState(1); // 1 = normal, >1 = expanded
+  const [explodeFactor, setExplodeFactor] = useState(1);
   const explodeTORef = useRef(null);
 
-  // --- Scenes (positions + zoom) ---
+  // Scenes (positions + zoom)
   const SCENES_KEY = "bubbleScenes:v1";
   const [scenes, setScenes] = useState(() => {
     try {
@@ -271,7 +291,7 @@ export default function BubbleAdjacencyApp() {
   const [updateAreasFromList, setUpdateAreasFromList] = useState(false);
   const [updateMatchMode, setUpdateMatchMode] = useState("name"); // "name" | "index"
 
-  // Edge style presets (necessary vs ideal)
+  // Edge style presets
   const [styles, setStyles] = useState({
     necessary: {
       color: "#8b5cf6",
@@ -295,7 +315,7 @@ export default function BubbleAdjacencyApp() {
 
   // Live preview background (used for on-screen canvas container)
   const [liveBgMode, setLiveBgMode] = useState("custom"); // transparent | white | custom
-  const [liveBgCustom, setLiveBgCustom] = useState(THEME.surface); // default matches old UI
+  const [liveBgCustom, setLiveBgCustom] = useState(THEME.surface);
 
   // BULK defaults (applied on generate or via "Apply to all")
   const [bulkFill, setBulkFill] = useState("#161625");
@@ -306,14 +326,10 @@ export default function BubbleAdjacencyApp() {
   const [bulkTextColor, setBulkTextColor] = useState("#e6e6f0");
   const [bulkTextSize, setBulkTextSize] = useState(12);
 
-  // NEW: global label scale (applies to all labels visually)
-  const [labelScale, setLabelScale] = useState(1); // 1 = 100%
-
   // Refs
   const svgRef = useRef(null);
   const simRef = useRef(null);
   const containerRef = useRef(null);
-  // File handle for JSON (File System Access API)
   const jsonHandleRef = useRef(null);
 
   // Zoom / Pan
@@ -333,7 +349,8 @@ export default function BubbleAdjacencyApp() {
     buffer,
     arrowOverlap,
     rotationSensitivity,
-    // note: labelScale not included in undo/redo on purpose (global visual control)
+    showLegend,
+    legendPos,
   });
   const pushHistory = () => {
     historyRef.current.push(snapshot());
@@ -349,6 +366,8 @@ export default function BubbleAdjacencyApp() {
     setBuffer(prev.buffer);
     setArrowOverlap(prev.arrowOverlap ?? 0);
     setRotationSensitivity(prev.rotationSensitivity ?? 0);
+    setShowLegend(prev.showLegend ?? true);
+    if (prev.legendPos) setLegendPos(prev.legendPos);
   }
   function redo() {
     if (!futureRef.current.length) return;
@@ -360,9 +379,11 @@ export default function BubbleAdjacencyApp() {
     setBuffer(next.buffer);
     setArrowOverlap(next.arrowOverlap ?? 0);
     setRotationSensitivity(next.rotationSensitivity ?? 0);
+    setShowLegend(next.showLegend ?? true);
+    if (next.legendPos) setLegendPos(next.legendPos);
   }
 
-  // ---------------------------- Preset Persistence ---------------------------
+  // ---------------------------- Preset Persistence + Autosave ----------------
   useEffect(() => {
     const p = loadPresets();
     if (!p) return;
@@ -371,6 +392,9 @@ export default function BubbleAdjacencyApp() {
     if (typeof p.arrowOverlap === "number") setArrowOverlap(p.arrowOverlap);
     if (typeof p.rotationSensitivity === "number")
       setRotationSensitivity(p.rotationSensitivity);
+    if (typeof p.showLegend === "boolean") setShowLegend(p.showLegend);
+    if (p.legendPos && typeof p.legendPos.x === "number" && typeof p.legendPos.y === "number")
+      setLegendPos(p.legendPos);
     if (p.bulk) {
       const b = p.bulk;
       if (typeof b.bulkFill === "string") setBulkFill(b.bulkFill);
@@ -380,16 +404,13 @@ export default function BubbleAdjacencyApp() {
       if (typeof b.bulkStrokeWidth === "number")
         setBulkStrokeWidth(Math.max(1, Math.min(12, b.bulkStrokeWidth)));
       if (typeof b.bulkTextFont === "string") setBulkTextFont(b.bulkTextFont);
-      if (typeof b.bulkTextColor === "string")
-        setBulkTextColor(b.bulkTextColor);
-      if (b.bulkTextSize != null)
-        setBulkTextSize(clampTextSize(b.bulkTextSize));
+      if (typeof b.bulkTextColor === "string") setBulkTextColor(b.bulkTextColor);
+      if (b.bulkTextSize != null) setBulkTextSize(clampTextSize(b.bulkTextSize));
     }
     if (p.exportBgMode) setExportBgMode(p.exportBgMode);
     if (p.exportBgCustom) setExportBgCustom(p.exportBgCustom);
     if (p.liveBgMode) setLiveBgMode(p.liveBgMode);
     if (p.liveBgCustom) setLiveBgCustom(p.liveBgCustom);
-    if (typeof p.labelScale === "number") setLabelScale(p.labelScale);
   }, []);
 
   useEffect(() => {
@@ -398,6 +419,8 @@ export default function BubbleAdjacencyApp() {
       buffer,
       arrowOverlap,
       rotationSensitivity,
+      showLegend,
+      legendPos,
       bulk: {
         bulkFill,
         bulkFillTransparent,
@@ -413,7 +436,6 @@ export default function BubbleAdjacencyApp() {
       liveBgCustom,
       scenes,
       activeSceneId,
-      labelScale,
     };
     savePresets(payload);
   }, [
@@ -421,6 +443,8 @@ export default function BubbleAdjacencyApp() {
     buffer,
     arrowOverlap,
     rotationSensitivity,
+    showLegend,
+    legendPos,
     bulkFill,
     bulkFillTransparent,
     bulkStroke,
@@ -434,8 +458,38 @@ export default function BubbleAdjacencyApp() {
     liveBgCustom,
     scenes,
     activeSceneId,
-    labelScale,
   ]);
+
+  // Autosave every ~45s
+  useEffect(() => {
+    const id = setInterval(() => {
+      try {
+        const blob = {
+          ...buildExportPayload(),
+          timestamp: Date.now(),
+        };
+        localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(blob));
+      } catch {}
+    }, 45000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodes, links, styles, buffer, rotationSensitivity, arrowOverlap, showLegend, legendPos]);
+
+  // Offer crash-recovery restore once on mount
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(AUTOSAVE_KEY);
+      if (!raw) return;
+      const saved = JSON.parse(raw);
+      if (!saved || !saved.nodes) return;
+      const ts = new Date(saved.timestamp || Date.now());
+      const ok = window.confirm(
+        `A recoverable autosave was found from ${ts.toLocaleString()}. Restore it?`
+      );
+      if (ok) parseAndLoadJSON(JSON.stringify(saved));
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ---------------------------- D3 Force Simulation --------------------------
   useEffect(() => {
@@ -444,7 +498,10 @@ export default function BubbleAdjacencyApp() {
       .alphaDecay(0.05)
       .velocityDecay(0.3)
       .force("charge", d3.forceManyBody().strength(-80))
-      .force("collide", d3.forceCollide().radius((d) => (d.r || BASE_R_MIN) + buffer))
+      .force(
+        "collide",
+        d3.forceCollide().radius((d) => (d.r || BASE_R_MIN) + buffer)
+      )
       .force("center", d3.forceCenter(0, 0))
       .force("spin", makeSpinForce(rotationSensitivity));
     simRef.current = sim;
@@ -468,7 +525,6 @@ export default function BubbleAdjacencyApp() {
     const charge = sim.force("charge");
     charge && charge.strength(baseCharge * mult);
 
-    // also refresh collide with extra cushion
     sim.force(
       "collide",
       d3
@@ -486,26 +542,43 @@ export default function BubbleAdjacencyApp() {
 
   const rafRef = useRef(null);
   useEffect(() => {
-    const sim = simRef.current;
-    if (!sim) return;
-    const nn = nodes.map((n) => ({ ...n, r: rOf(n.area) }));
-    const idMap = new Map(nn.map((n) => [n.id, n]));
-    const linkObjs = links.map((l) => ({
-      ...l,
-      source: idMap.get(l.source),
-      target: idMap.get(l.target),
-      type: l.type,
+    // lock-fix: inject fx/fy for locked nodes if absent
+    const nn = nodes.map((n) => ({
+      ...n,
+      r: rOf(n.area),
+      fx: n.locked ? (n.fx ?? n.x ?? 0) : n.fx,
+      fy: n.locked ? (n.fy ?? n.y ?? 0) : n.fy,
     }));
 
+    // Build link objects (dedupe to 1 per pair)
+    const byPair = new Map();
+    for (const l of links) {
+      const k = pairKey(l.source, l.target);
+      const prev = byPair.get(k);
+      if (!prev) byPair.set(k, l);
+      else {
+        // prefer "necessary" over "ideal" if duplicate
+        if (prev.type !== "necessary" && l.type === "necessary") byPair.set(k, l);
+      }
+    }
+    const linkArr = Array.from(byPair.values()).map((l) => ({
+      ...l,
+      source: nn.find((n) => n.id === l.source),
+      target: nn.find((n) => n.id === l.target),
+    }));
+
+    const sim = simRef.current;
+    if (!sim) return;
+
     const linkForce = d3
-      .forceLink(linkObjs)
+      .forceLink(linkArr)
       .id((d) => d.id)
       .distance((l) => {
         const base =
           (l.source.r || BASE_R_MIN) + (l.target.r || BASE_R_MIN);
         const k = l.type === "necessary" ? 1.1 : 1.0;
         const d0 = base * 1.05 * k + 40 + buffer * 1.5;
-        return d0 * (explodeFactor || 1); // expand when detangling
+        return d0 * (explodeFactor || 1);
       })
       .strength((l) => (l.type === "necessary" ? 0.5 : 0.25));
 
@@ -528,13 +601,12 @@ export default function BubbleAdjacencyApp() {
     if (physics) sim.alpha(0.9).restart();
     else sim.stop();
 
+    const idMap = new Map(nn.map((n) => [n.id, n]));
     const onTick = () => {
       if (rafRef.current != null) return;
       rafRef.current = requestAnimationFrame(() => {
         rafRef.current = null;
-        setNodes((prev) =>
-          prev.map((p) => ({ ...p, ...idMap.get(p.id) }))
-        );
+        setNodes((prev) => prev.map((p) => ({ ...p, ...idMap.get(p.id) })));
       });
     };
     sim.on("tick", onTick);
@@ -545,6 +617,7 @@ export default function BubbleAdjacencyApp() {
         rafRef.current = null;
       }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodes.length, links, physics, rOf, buffer, explodeFactor]);
 
   // ---------------------------- Generate / Edit -------------------------------
@@ -570,6 +643,7 @@ export default function BubbleAdjacencyApp() {
     setLinkSource(null);
     setPhysics(true);
     setSelectedNodeId(null);
+    setSelectedIds([]);
     resetZoom();
   }
 
@@ -666,6 +740,7 @@ export default function BubbleAdjacencyApp() {
     setLinks([]);
     setLinkSource(null);
     setSelectedNodeId(null);
+    setSelectedIds([]);
   }
 
   function handleConnect(node) {
@@ -680,13 +755,13 @@ export default function BubbleAdjacencyApp() {
     }
     pushHistory();
     setLinks((p) => [
-      ...p,
+      ...removePairLinks(p, linkSource, node.id),
       { id: uid(), source: linkSource, target: node.id, type: currentLineType },
     ]);
     setLinkSource(null);
   }
 
-  function applyBulkBubbleStyles() {
+  function applyBulkBubbleStylesToAll() {
     pushHistory();
     setNodes((prev) =>
       prev.map((n) => ({
@@ -697,8 +772,7 @@ export default function BubbleAdjacencyApp() {
       }))
     );
   }
-
-  function applyBulkTextStyles() {
+  function applyBulkTextStylesToAll() {
     pushHistory();
     setNodes((prev) =>
       prev.map((n) => ({
@@ -709,24 +783,64 @@ export default function BubbleAdjacencyApp() {
       }))
     );
   }
-
-  // ---------------------------- Dragging -------------------------------------
-  const draggingRef = useRef(null);
-  const dragStartSnapshotRef = useRef(null);
-  function onPointerDownNode(e, node) {
-    e.stopPropagation();
-    setSelectedNodeId(node.id);
-
-    // do not start drag while in Connect mode (ensures second click creates link)
-    if (mode === "connect") return;
-
-    draggingRef.current = node.id;
-    dragStartSnapshotRef.current = snapshot();
-    try {
-      e.currentTarget.setPointerCapture?.(e.pointerId);
-    } catch {}
-    simRef.current?.alphaTarget(0.4).restart();
+  function applyBulkBubbleStylesToSelection() {
+    if (!selectedIds.length) return;
+    pushHistory();
+    setNodes((prev) =>
+      prev.map((n) =>
+        selectedSet.has(n.id)
+          ? {
+              ...n,
+              fill: bulkFillTransparent ? "none" : bulkFill,
+              stroke: bulkStroke,
+              strokeWidth: bulkStrokeWidth,
+            }
+          : n
+      )
+    );
   }
+  function applyBulkTextStylesToSelection() {
+    if (!selectedIds.length) return;
+    pushHistory();
+    setNodes((prev) =>
+      prev.map((n) =>
+        selectedSet.has(n.id)
+          ? {
+              ...n,
+              textFont: bulkTextFont,
+              textColor: bulkTextColor,
+              textSize: clampTextSize(bulkTextSize),
+            }
+          : n
+      )
+    );
+  }
+
+  // ---------------------------- Selection helpers ----------------------------
+  const selectOnly = (id) => setSelectedIds(id ? [id] : []);
+  const toggleSelect = (id) =>
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  const clearSelection = () => setSelectedIds([]);
+  const selectAll = () => setSelectedIds(nodes.map((n) => n.id));
+
+  function deleteSelection() {
+    if (!selectedIds.length) return;
+    pushHistory();
+    const set = new Set(selectedIds);
+    setNodes((prev) => prev.filter((n) => !set.has(n.id)));
+    setLinks((prev) =>
+      prev.filter((l) => !set.has(l.source) && !set.has(l.target))
+    );
+    setSelectedIds([]);
+    if (selectedNodeId && set.has(selectedNodeId)) setSelectedNodeId(null);
+  }
+
+  // ---------------------------- Dragging (single & group) --------------------
+  const groupDragRef = useRef(null);
+  const dragStartSnapshotRef = useRef(null);
+
   function svgToLocalPoint(svgEl, clientX, clientY) {
     if (!svgEl) return { x: clientX, y: clientY };
     const pt = svgEl.createSVGPoint();
@@ -741,133 +855,307 @@ export default function BubbleAdjacencyApp() {
     const p = new DOMPoint(loc.x, loc.y).matrixTransform(innerCTM.inverse());
     return { x: p.x, y: p.y };
   }
+
+  function onPointerDownNode(e, node) {
+    e.stopPropagation();
+
+    if (mode === "connect") return;
+
+    // selection logic
+    if (e.ctrlKey || e.metaKey || e.shiftKey) toggleSelect(node.id);
+    else if (!selectedSet.has(node.id)) selectOnly(node.id);
+
+    setSelectedNodeId(node.id);
+
+    // start group drag
+    const svg = svgRef.current;
+    const pt = svgToLocalPoint(svg, e.clientX, e.clientY);
+    const ids = selectedSet.has(node.id) ? [...selectedIds] : [node.id];
+    const startPos = new Map();
+    const dict = new Map(nodes.map((n) => [n.id, n]));
+    ids.forEach((id) => {
+      const n = dict.get(id);
+      startPos.set(id, { x: n?.x || 0, y: n?.y || 0 });
+    });
+    groupDragRef.current = { ids, start: pt, startPos };
+    dragStartSnapshotRef.current = snapshot();
+    try {
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+    } catch {}
+    simRef.current?.alphaTarget(0.4).restart();
+  }
+
   function onPointerMove(e) {
-    const id = draggingRef.current;
-    if (!id) return;
+    if (lasso.active) {
+      const svg = svgRef.current;
+      const p = svgToLocalPoint(svg, e.clientX, e.clientY);
+      setLasso((prev) => ({ active: true, points: [...prev.points, p] }));
+      return;
+    }
+    if (legendDragRef.current) {
+      const svg = svgRef.current;
+      const p = svgToLocalPoint(svg, e.clientX, e.clientY);
+      const { offX, offY } = legendDragRef.current;
+      setLegendPos({ x: p.x - offX, y: p.y - offY });
+      return;
+    }
+    const drag = groupDragRef.current;
+    if (!drag) return;
     const svg = svgRef.current;
     const { x, y } = svgToLocalPoint(svg, e.clientX, e.clientY);
+    const dx = x - drag.start.x;
+    const dy = y - drag.start.y;
     setNodes((prev) =>
       prev.map((n) =>
-        n.id === id ? { ...n, x, y, fx: x, fy: y } : n
+        drag.ids.includes(n.id)
+          ? {
+              ...n,
+              x: drag.startPos.get(n.id).x + dx,
+              y: drag.startPos.get(n.id).y + dy,
+              fx: drag.startPos.get(n.id).x + dx,
+              fy: drag.startPos.get(n.id).y + dy,
+            }
+          : n
       )
     );
   }
+
   function onPointerUp() {
-    const id = draggingRef.current;
-    if (!id) return;
-    draggingRef.current = null;
+    if (lasso.active) {
+      finishLasso();
+      return;
+    }
+    if (legendDragRef.current) {
+      legendDragRef.current = null;
+      return;
+    }
+    const drag = groupDragRef.current;
+    if (!drag) return;
+    // release fx/fy unless locked
     setNodes((prev) =>
       prev.map((n) =>
-        n.id === id ? { ...n, fx: undefined, fy: undefined } : n
+        drag.ids.includes(n.id)
+          ? {
+              ...n,
+              fx: n.locked ? (n.x ?? 0) : undefined,
+              fy: n.locked ? (n.y ?? 0) : undefined,
+            }
+          : n
       )
     );
+    groupDragRef.current = null;
     if (dragStartSnapshotRef.current)
       historyRef.current.push(dragStartSnapshotRef.current);
     dragStartSnapshotRef.current = null;
-    futureRef.current = [];
     simRef.current?.alphaTarget(0);
+  }
+
+  // --- Lasso selection (Shift + drag on background) --------------------------
+  function onPointerDownSvg(e) {
+    if (mode !== "select") return;
+    // If clicked directly on SVG (background) and holding Shift => start lasso
+    if (e.shiftKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      const svg = svgRef.current;
+      const p = svgToLocalPoint(svg, e.clientX, e.clientY);
+      // disable zoom during lasso
+      const sel = d3.select(svg);
+      sel.on(".zoom", null);
+      setLasso({ active: true, points: [p] });
+    } else {
+      // clicking background clears selection (no modifiers)
+      if (!(e.ctrlKey || e.metaKey)) {
+        setSelectedIds([]);
+        setSelectedNodeId(null);
+      }
+    }
+  }
+
+  function finishLasso() {
+    const pts = lasso.points;
+    const dict = new Map(nodes.map((n) => [n.id, n]));
+    const inside = [];
+    for (const n of nodes) {
+      const p = { x: n.x || 0, y: n.y || 0 };
+      if (pointInPolygon(p, pts)) inside.push(n.id);
+    }
+    setSelectedIds(inside);
+    setLasso({ active: false, points: [] });
+    // re-enable zoom
+    const svg = d3.select(svgRef.current);
+    const zoom = zoomBehaviorRef.current;
+    if (zoom) svg.call(zoom);
   }
 
   // ---------------------------- Node style setters ---------------------------
   function renameNode(id, val) {
     pushHistory();
-    setNodes((p) =>
-      p.map((n) => (n.id === id ? { ...n, name: val } : n))
-    );
+    setNodes((p) => p.map((n) => (n.id === id ? { ...n, name: val } : n)));
   }
   function changeArea(id, v) {
     pushHistory();
     const a = toNumber(v, 1);
     setNodes((p) =>
-      p.map((n) =>
-        n.id === id ? { ...n, area: Math.max(1, a) } : n
-      )
+      p.map((n) => (n.id === id ? { ...n, area: Math.max(1, a) } : n))
     );
   }
   function setNodeFill(id, colorOrNone) {
     pushHistory();
     setNodes((p) =>
-      p.map((n) =>
-        n.id === id ? { ...n, fill: colorOrNone } : n
-      )
+      p.map((n) => (n.id === id ? { ...n, fill: colorOrNone } : n))
     );
   }
   function setNodeStroke(id, color) {
     pushHistory();
     setNodes((p) =>
-      p.map((n) =>
-        n.id === id ? { ...n, stroke: color } : n
-      )
+      p.map((n) => (n.id === id ? { ...n, stroke: color } : n))
     );
   }
   function setNodeStrokeW(id, w) {
     pushHistory();
     const width = Math.max(1, Math.min(12, toNumber(w, 2)));
     setNodes((p) =>
-      p.map((n) =>
-        n.id === id ? { ...n, strokeWidth: width } : n
-      )
+      p.map((n) => (n.id === id ? { ...n, strokeWidth: width } : n))
     );
   }
   function setNodeTextColor(id, c) {
     pushHistory();
     setNodes((p) =>
-      p.map((n) =>
-        n.id === id ? { ...n, textColor: c } : n
-      )
+      p.map((n) => (n.id === id ? { ...n, textColor: c } : n))
     );
   }
   function setNodeTextSize(id, s) {
     pushHistory();
     setNodes((p) =>
-      p.map((n) =>
-        n.id === id ? { ...n, textSize: clampTextSize(s) } : n
-      )
+      p.map((n) => (n.id === id ? { ...n, textSize: clampTextSize(s) } : n))
     );
   }
   function setNodeTextFont(id, f) {
     pushHistory();
     setNodes((p) =>
+      p.map((n) => (n.id === id ? { ...n, textFont: f } : n))
+    );
+  }
+  function setNodeLocked(id, flag) {
+    pushHistory();
+    setNodes((p) =>
       p.map((n) =>
-        n.id === id ? { ...n, textFont: f } : n
+        n.id === id
+          ? {
+              ...n,
+              locked: !!flag,
+              fx: flag ? (n.x ?? 0) : undefined,
+              fy: flag ? (n.y ?? 0) : undefined,
+            }
+          : n
+      )
+    );
+  }
+  function pinSelection(flag) {
+    if (!selectedIds.length) return;
+    pushHistory();
+    setNodes((prev) =>
+      prev.map((n) =>
+        selectedSet.has(n.id)
+          ? {
+              ...n,
+              locked: !!flag,
+              fx: flag ? (n.x ?? 0) : undefined,
+              fy: flag ? (n.y ?? 0) : undefined,
+            }
+          : n
       )
     );
   }
 
   // ---------------------------- Keyboard Shortcuts ---------------------------
   const lastClickedLinkRef = useRef(null);
+  const [showHelp, setShowHelp] = useState(false);
+
   useEffect(() => {
     const onKey = (e) => {
+      const k = e.key;
+      // Cheatsheet
+      if (k === "?" || (k === "/" && e.shiftKey)) {
+        e.preventDefault();
+        setShowHelp((v) => !v);
+        return;
+      }
+      // Undo/Redo/Save
       if (e.ctrlKey || e.metaKey) {
-        const k = e.key.toLowerCase();
-        if (k === "z") {
+        const kk = k.toLowerCase();
+        if (kk === "z") {
           e.preventDefault();
           if (e.shiftKey) redo();
           else undo();
           return;
         }
-        if (k === "y") {
+        if (kk === "y") {
           e.preventDefault();
           redo();
           return;
         }
-        if (k === "s") {
+        if (kk === "s") {
           e.preventDefault();
           saveJSON();
           return;
         }
       }
-      if (e.key === "Delete" || e.key === "Backspace") {
+      // Selection ops
+      if (k === "a" && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        selectAll();
+        return;
+      }
+      if (k === "Escape") {
+        clearSelection();
+        return;
+      }
+      // Delete: nodes or last-clicked link
+      if (k === "Delete" || k === "Backspace") {
+        if (selectedIds.length) {
+          e.preventDefault();
+          deleteSelection();
+          return;
+        }
         const id = lastClickedLinkRef.current;
-        if (!id) return;
+        if (id) {
+          e.preventDefault();
+          pushHistory();
+          setLinks((p) => p.filter((l) => l.id !== id));
+          lastClickedLinkRef.current = null;
+        }
+      }
+      // Arrow keys nudge selected nodes
+      if (
+        ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(k) &&
+        selectedIds.length
+      ) {
+        e.preventDefault();
+        const step = e.shiftKey ? 20 : 5;
+        const dx = k === "ArrowLeft" ? -step : k === "ArrowRight" ? step : 0;
+        const dy = k === "ArrowUp" ? -step : k === "ArrowDown" ? step : 0;
         pushHistory();
-        setLinks((p) => p.filter((l) => l.id !== id));
-        lastClickedLinkRef.current = null;
+        setNodes((prev) =>
+          prev.map((n) =>
+            selectedSet.has(n.id)
+              ? {
+                  ...n,
+                  x: (n.x || 0) + dx,
+                  y: (n.y || 0) + dy,
+                  fx: n.locked ? (n.x || 0) + dx : n.fx,
+                  fy: n.locked ? (n.y || 0) + dy : n.fy,
+                }
+              : n
+          )
+        );
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedIds, selectedSet]);
 
   // ---------------------------- Scenes API -----------------------------------
   function captureScenePayload() {
@@ -875,22 +1163,14 @@ export default function BubbleAdjacencyApp() {
     for (const n of nodes) pos[n.id] = { x: n.x || 0, y: n.y || 0 };
     return {
       positions: pos,
-      zoom: {
-        k: zoomTransform.k,
-        x: zoomTransform.x,
-        y: zoomTransform.y,
-      },
+      zoom: { k: zoomTransform.k, x: zoomTransform.x, y: zoomTransform.y },
       updatedAt: Date.now(),
     };
   }
   function addScene(name) {
     const nm = String(name || "").trim() || `Scene ${scenes.length + 1}`;
     const payload = captureScenePayload();
-    const s = {
-      id: Math.random().toString(36).slice(2, 9),
-      name: nm,
-      ...payload,
-    };
+    const s = { id: Math.random().toString(36).slice(2, 9), name: nm, ...payload };
     setScenes((prev) => [...prev, s]);
     setActiveSceneId(s.id);
   }
@@ -975,9 +1255,7 @@ export default function BubbleAdjacencyApp() {
       clone.insertBefore(rect, clone.firstChild);
     }
     const svgStr = new XMLSerializer().serializeToString(clone);
-    const blob = new Blob([svgStr], {
-      type: "image/svg+xml;charset=utf-8",
-    });
+    const blob = new Blob([svgStr], { type: "image/svg+xml;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     download(url, `bubble-diagram-${Date.now()}.svg`);
   }
@@ -1015,8 +1293,7 @@ export default function BubbleAdjacencyApp() {
         download(url, `bubble-diagram-${Date.now()}.png`);
       });
     };
-    img.onerror = () =>
-      alert("PNG export failed. Try SVG export if issue persists.");
+    img.onerror = () => alert("PNG export failed. Try SVG export if issue persists.");
     img.src = `data:image/svg+xml;base64,${svg64}`;
   }
 
@@ -1038,11 +1315,13 @@ export default function BubbleAdjacencyApp() {
       arrowOverlap,
       rotationSensitivity,
       showMeasurements,
+      showLegend,
+      legendPos,
       exportBgMode,
       exportBgCustom,
       liveBgMode,
       liveBgCustom,
-      labelScale,
+      highContrast,
     };
   }
 
@@ -1079,10 +1358,7 @@ export default function BubbleAdjacencyApp() {
         await writable.close();
         return;
       } catch (err) {
-        console.warn(
-          "Save As cancelled or failed; using download() fallback.",
-          err
-        );
+        console.warn("Save As cancelled or failed; using download() fallback.", err);
       }
     }
     let name =
@@ -1090,10 +1366,9 @@ export default function BubbleAdjacencyApp() {
         ? window.prompt("File name", "bubble-diagram.json") ||
           "bubble-diagram.json"
         : "bubble-diagram.json";
-    const blob = new Blob(
-      [JSON.stringify(buildExportPayload(), null, 2)],
-      { type: "application/json" }
-    );
+    const blob = new Blob([JSON.stringify(buildExportPayload(), null, 2)], {
+      type: "application/json",
+    });
     const url = URL.createObjectURL(blob);
     download(url, name);
   }
@@ -1161,15 +1436,10 @@ export default function BubbleAdjacencyApp() {
           setBulkFillTransparent(b.bulkFillTransparent);
         if (typeof b.bulkStroke === "string") setBulkStroke(b.bulkStroke);
         if (typeof b.bulkStrokeWidth === "number")
-          setBulkStrokeWidth(
-            Math.max(1, Math.min(12, b.bulkStrokeWidth))
-          );
-        if (typeof b.bulkTextFont === "string")
-          setBulkTextFont(b.bulkTextFont);
-        if (typeof b.bulkTextColor === "string")
-          setBulkTextColor(b.bulkTextColor);
-        if (b.bulkTextSize != null)
-          setBulkTextSize(clampTextSize(b.bulkTextSize));
+          setBulkStrokeWidth(Math.max(1, Math.min(12, b.bulkStrokeWidth)));
+        if (typeof b.bulkTextFont === "string") setBulkTextFont(b.bulkTextFont);
+        if (typeof b.bulkTextColor === "string") setBulkTextColor(b.bulkTextColor);
+        if (b.bulkTextSize != null) setBulkTextSize(clampTextSize(b.bulkTextSize));
       }
       if (typeof d.buffer === "number") setBuffer(d.buffer);
       if (typeof d.arrowOverlap === "number") setArrowOverlap(d.arrowOverlap);
@@ -1177,11 +1447,14 @@ export default function BubbleAdjacencyApp() {
         setRotationSensitivity(d.rotationSensitivity);
       if (typeof d.showMeasurements === "boolean")
         setShowMeasurements(d.showMeasurements);
+      if (typeof d.showLegend === "boolean") setShowLegend(d.showLegend);
+      if (d.legendPos && typeof d.legendPos.x === "number" && typeof d.legendPos.y === "number")
+        setLegendPos(d.legendPos);
       if (d.exportBgMode) setExportBgMode(d.exportBgMode);
       if (d.exportBgCustom) setExportBgCustom(d.exportBgCustom);
       if (d.liveBgMode) setLiveBgMode(d.liveBgMode);
       if (d.liveBgCustom) setLiveBgCustom(d.liveBgCustom);
-      if (typeof d.labelScale === "number") setLabelScale(d.labelScale);
+      if (typeof d.highContrast === "boolean") setHighContrast(d.highContrast);
     } catch {
       alert("Invalid JSON file");
     }
@@ -1216,26 +1489,23 @@ export default function BubbleAdjacencyApp() {
             setBulkFillTransparent(b.bulkFillTransparent);
           if (typeof b.bulkStroke === "string") setBulkStroke(b.bulkStroke);
           if (typeof b.bulkStrokeWidth === "number")
-            setBulkStrokeWidth(
-              Math.max(1, Math.min(12, b.bulkStrokeWidth))
-            );
-          if (typeof b.bulkTextFont === "string")
-            setBulkTextFont(b.bulkTextFont);
-          if (typeof b.bulkTextColor === "string")
-            setBulkTextColor(b.bulkTextColor);
-          if (b.bulkTextSize != null)
-            setBulkTextSize(clampTextSize(b.bulkTextSize));
+            setBulkStrokeWidth(Math.max(1, Math.min(12, b.bulkStrokeWidth)));
+          if (typeof b.bulkTextFont === "string") setBulkTextFont(b.bulkTextFont);
+          if (typeof b.bulkTextColor === "string") setBulkTextColor(b.bulkTextColor);
+          if (b.bulkTextSize != null) setBulkTextSize(clampTextSize(b.bulkTextSize));
         }
         if (typeof d.buffer === "number") setBuffer(d.buffer);
-        if (typeof d.arrowOverlap === "number")
-          setArrowOverlap(d.arrowOverlap);
+        if (typeof d.arrowOverlap === "number") setArrowOverlap(d.arrowOverlap);
         if (typeof d.rotationSensitivity === "number")
           setRotationSensitivity(d.rotationSensitivity);
         if (d.exportBgMode) setExportBgMode(d.exportBgMode);
         if (d.exportBgCustom) setExportBgCustom(d.exportBgCustom);
         if (d.liveBgMode) setLiveBgMode(d.liveBgMode);
         if (d.liveBgCustom) setLiveBgCustom(d.liveBgCustom);
-        if (typeof d.labelScale === "number") setLabelScale(d.labelScale);
+        if (typeof d.highContrast === "boolean") setHighContrast(d.highContrast);
+        if (typeof d.showLegend === "boolean") setShowLegend(d.showLegend);
+        if (d.legendPos && typeof d.legendPos.x === "number" && typeof d.legendPos.y === "number")
+          setLegendPos(d.legendPos);
       } catch {
         alert("Invalid JSON file");
       }
@@ -1259,11 +1529,9 @@ export default function BubbleAdjacencyApp() {
 
   // ---------------------------- Detangle pulse -------------------------------
   function detanglePulse() {
-    // bump expansion
     if (explodeTORef.current) clearTimeout(explodeTORef.current);
     setExplodeFactor(2.2);
     simRef.current?.alpha(1).restart();
-    // ease back after a short delay
     explodeTORef.current = setTimeout(() => {
       setExplodeFactor(1);
       simRef.current?.alpha(0.6).restart();
@@ -1312,39 +1580,25 @@ export default function BubbleAdjacencyApp() {
   function fitToView() {
     if (!nodes.length) return resetZoom();
     const r = (n) => rOf(n.area);
-    const minX =
-      d3.min(nodes, (n) => (n.x || 0) - r(n)) ?? -600;
-    const maxX =
-      d3.max(nodes, (n) => (n.x || 0) + r(n)) ?? 600;
-    const minY =
-      d3.min(nodes, (n) => (n.y || 0) - r(n)) ?? -350;
-    const maxY =
-      d3.max(nodes, (n) => (n.y || 0) + r(n)) ?? 350;
-    const bbox = {
-      x: minX,
-      y: minY,
-      width: maxX - minX,
-      height: maxY - minY,
-    };
+    const minX = d3.min(nodes, (n) => (n.x || 0) - r(n)) ?? -600;
+    const maxX = d3.max(nodes, (n) => (n.x || 0) + r(n)) ?? 600;
+    const minY = d3.min(nodes, (n) => (n.y || 0) - r(n)) ?? -350;
+    const maxY = d3.max(nodes, (n) => (n.y || 0) + r(n)) ?? 350;
+    const bbox = { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
     const view = { x: -600, y: -350, width: 1200, height: 700 };
     const pad = 40;
     const sx = (view.width - pad * 2) / (bbox.width || 1);
     const sy = (view.height - pad * 2) / (bbox.height || 1);
     const k = Math.min(5, Math.max(0.2, Math.min(sx, sy)));
-    const tx =
-      view.x + (view.width - bbox.width * k) / 2 - bbox.x * k;
-    const ty =
-      view.y + (view.height - bbox.height * k) / 2 - bbox.y * k;
+    const tx = view.x + (view.width - bbox.width * k) / 2 - bbox.x * k;
+    const ty = view.y + (view.height - bbox.height * k) / 2 - bbox.y * k;
     const svg = d3.select(svgRef.current);
     const zoom = zoomBehaviorRef.current;
     if (!zoom) return;
     svg
       .transition()
       .duration(250)
-      .call(
-        zoom.transform,
-        d3.zoomIdentity.translate(tx, ty).scale(k)
-      );
+      .call(zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(k));
   }
 
   // ---------------------------- Fullscreen -----------------------------------
@@ -1363,6 +1617,81 @@ export default function BubbleAdjacencyApp() {
       document.exitFullscreen?.();
     }
   }
+
+  // ---------------------------- Link helpers ---------------------------------
+  function removePairLinks(arr, a, b) {
+    const k = pairKey(a, b);
+    return arr.filter((l) => pairKey(l.source, l.target) !== k);
+  }
+  function getLinkTypeBetween(a, b) {
+    const k = pairKey(a, b);
+    const L = links.find((l) => pairKey(l.source, l.target) === k);
+    return L ? L.type : "none";
+  }
+  function setLinkTypeBetween(a, b, type) {
+    if (a === b) return;
+    pushHistory();
+    setLinks((prev) => {
+      const base = removePairLinks(prev, a, b);
+      if (type === "none") return base;
+      return [...base, { id: uid(), source: a, target: b, type }];
+    });
+  }
+
+  // ---------------------------- Conflict detector ----------------------------
+  const longLinkIds = useMemo(() => {
+    const ids = new Set();
+    const map = new Map(nodes.map((n) => [n.id, n]));
+    for (const l of links) {
+      if (l.type !== "necessary") continue;
+      const s = map.get(l.source);
+      const t = map.get(l.target);
+      if (!s || !t) continue;
+      const dx = (t.x || 0) - (s.x || 0);
+      const dy = (t.y || 0) - (s.y || 0);
+      const dist = Math.hypot(dx, dy) || 1;
+      const rs = rOf(s.area);
+      const rt = rOf(t.area);
+      const base = (rs + rt) * 1.05 * 1.1 + 40 + buffer * 1.5;
+      if (dist > base * longFactor) ids.add(l.id);
+    }
+    return ids;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodes, links, buffer, longFactor, rOf]);
+
+  const missingNecessary = useMemo(() => {
+    const out = [];
+    const nByName = new Map(nodes.map((n) => [norm(n.name), n]));
+    const have = new Set(
+      links
+        .filter((l) => l.type === "necessary")
+        .map((l) => pairKey(l.source, l.target))
+    );
+    const lines = expectedPairsText
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    for (const line of lines) {
+      // accept "A - B" or "A, B"
+      const m = line.match(/^(.*?)\s*[-,]\s*(.*?)$/);
+      if (!m) continue;
+      const a = nByName.get(norm(m[1]));
+      const b = nByName.get(norm(m[2]));
+      if (!a || !b) continue;
+      const k = pairKey(a.id, b.id);
+      if (!have.has(k)) out.push({ a, b });
+    }
+    return out;
+  }, [nodes, links, expectedPairsText]);
+
+  const missingNodeIdSet = useMemo(() => {
+    const s = new Set();
+    for (const m of missingNecessary) {
+      s.add(m.a.id);
+      s.add(m.b.id);
+    }
+    return s;
+  }, [missingNecessary]);
 
   // ---------------------------- Render ---------------------------------------
   const dashFor = (type) =>
@@ -1384,16 +1713,31 @@ export default function BubbleAdjacencyApp() {
     return liveBgCustom || THEME.surface;
   })();
 
+  // Legend drag start
+  function onLegendPointerDown(e) {
+    e.stopPropagation();
+    const svg = svgRef.current;
+    const p = svgToLocalPoint(svg, e.clientX, e.clientY);
+    legendDragRef.current = { offX: p.x - legendPos.x, offY: p.y - legendPos.y };
+    try {
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+    } catch {}
+  }
+
   return (
     <div
-      className="w-full min-h-screen"
+      className={`w-full min-h-screen ${highContrast ? "hc" : ""}`}
       style={{ background: THEME.bg, color: THEME.text }}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
     >
-      {/* Global styles: color pills + high-contrast selects */}
+      {/* Global styles: controls, scrollbars, selects */}
       <style data-ignore-export>{`
         :root { color-scheme: dark; }
+        * { scrollbar-width: thin; scrollbar-color: #3a3a4a #121220; }
+        *::-webkit-scrollbar { height: 10px; width: 10px; }
+        *::-webkit-scrollbar-thumb { background: #3a3a4a; border-radius: 8px; }
+        *::-webkit-scrollbar-track { background: #121220; }
 
         input[type="color"] {
           -webkit-appearance: none;
@@ -1409,7 +1753,6 @@ export default function BubbleAdjacencyApp() {
         input[type="color"]::-webkit-color-swatch { border: none; border-radius: 9999px; }
         input[type="color"]::-moz-color-swatch { border: none; border-radius: 9999px; }
 
-        /* --- High-contrast form controls on dark UI --- */
         .ui-select{
           background:#0f0f18;
           color:#e6e6f0;
@@ -1420,1170 +1763,1051 @@ export default function BubbleAdjacencyApp() {
           line-height:1.2;
           box-shadow:0 6px 18px rgba(0,0,0,.35);
         }
-        .ui-select:focus{ outline:2px solid #8b5cf6; outline-offset:2px; }
+        .ui-select:focus{ outline:3px solid ${highContrast ? "#00D1FF" : "#8b5cf6"}; outline-offset:2px; }
         .ui-select option{ background:#0f0f18; color:#e6e6f0; }
         .ui-select option:checked,
         .ui-select option:hover{ background:#1b1b2a !important; color:#fff !important; }
+
+        .card {
+          background:#121220; border:1px solid ${THEME.border};
+          border-radius:16px; padding:14px;
+        }
+        .group-title {
+          font-size:12px; letter-spacing:.06em; color:${THEME.subtle}; font-weight:600;
+        }
+        .btn {
+          border:1px solid ${THEME.border}; border-radius:12px; padding:8px 12px; font-size:13px;
+          background:transparent; color:${THEME.text};
+        }
+        .btn:hover { background:rgba(255,255,255,.06); }
+        .btn:focus { outline:3px solid ${highContrast ? "#00D1FF" : "#8b5cf6"}; outline-offset:2px; }
+        .btn-xs { padding:6px 10px; font-size:12px; border-radius:10px; }
+        .dock-btn { width:38px; height:38px; display:flex; align-items:center; justify-content:center; border-radius:10px; }
+
+        .hc .card { border-color:#8b5cf6; }
+        .hc .btn:hover { background:rgba(255,255,255,.12); }
       `}</style>
 
-      {/* Toolbar */}
-      <div className="sticky top-0 z-10 backdrop-blur bg-black/30 border-b border-[#2a2a3a]">
-        <div className="mx-auto max-w-[1400px] px-4 py-3 flex flex-wrap items-center gap-3">
-          <div className="font-semibold tracking-wide text-sm text-[#9aa0a6]">
-            Bubble Diagram Builder
+      {/* Command bar */}
+      <div className="sticky top-0 z-20 backdrop-blur bg-black/35 border-b border-[#2a2a3a]">
+        <div className="mx-auto max-w-[1500px] px-4 py-3 flex items-center gap-3">
+          <div className="text-sm font-semibold tracking-wide text-[#d6d6e2] flex items-center gap-2">
+            Bubble Diagram Builder <span className="text-[11px] opacity-70">v1.0</span>
           </div>
-
-          <div className="ml-auto flex flex-wrap items-center gap-2">
-            {/* Modes */}
+          <div className="text-xs text-[#9aa0a6]">Design mode:</div>
+          <div className="flex items-center gap-1" role="group" aria-label="Mode">
             <button
-              className={`px-3 py-2 rounded-xl border ${
-                mode === "select" ? "bg-white/10" : ""
-              } border-[#2a2a3a] text-sm`}
+              className={`btn btn-xs ${mode === "select" ? "bg-white/10" : ""}`}
               onClick={() => setMode("select")}
+              aria-pressed={mode === "select"}
             >
-              Select / Drag
+              Select/Drag
             </button>
             <button
-              className={`px-3 py-2 rounded-xl border ${
-                mode === "connect" ? "bg-white/10" : ""
-              } border-[#2a2a3a] text-sm`}
+              className={`btn btn-xs ${mode === "connect" ? "bg-white/10" : ""}`}
               onClick={() => setMode("connect")}
+              aria-pressed={mode === "connect"}
             >
               Connect
             </button>
-
-            {/* Undo / Redo */}
+          </div>
+          <div className="ml-auto flex items-center gap-2">
+            <button className="btn btn-xs" onClick={undo} aria-label="Undo">Undo</button>
+            <button className="btn btn-xs" onClick={redo} aria-label="Redo">Redo</button>
+            <button className="btn btn-xs" onClick={clearAll} aria-label="Clear all">Clear</button>
             <button
-              className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm"
-              onClick={undo}
+              className={`btn btn-xs ${highContrast ? "bg-white/10" : ""}`}
+              onClick={() => setHighContrast((v) => !v)}
+              aria-pressed={highContrast}
+              title="High-contrast mode"
             >
-              Undo
+              HC
             </button>
-            <button
-              className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm"
-              onClick={redo}
-            >
-              Redo
-            </button>
+            <button className="btn btn-xs" onClick={() => setShowHelp(true)} title="Cheatsheet (?)">?</button>
+          </div>
+        </div>
+      </div>
 
-            {/* Line style controls */}
-            {["necessary", "ideal"].map((key) => (
-              <div
-                key={key}
-                className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs"
-              >
-                <span className="opacity-70 w-16 capitalize">
-                  {key}
-                </span>
-                <input
-                  type="color"
-                  value={styles[key].color}
-                  title={`${key} color`}
-                  onChange={(e) =>
-                    setStyles((s) => ({
-                      ...s,
-                      [key]: { ...s[key], color: e.target.value },
-                    }))
-                  }
-                />
-                <label className="flex items-center gap-1">
+      {/* Main layout */}
+      <div className="mx-auto max-w-[1500px] px-4 py-4 grid grid-cols-1 xl:grid-cols-12 gap-4">
+        {/* Controls column */}
+        <div className="xl:col-span-5 space-y-4">
+          {/* Instructions */}
+          <details open className="card">
+            <summary className="cursor-pointer select-none group-title">Instructions</summary>
+            <div className="mt-3 text-sm leading-6 text-[#d9d9e6]">
+              <ol className="list-decimal pl-5 space-y-2">
+                <li><b>Paste your spaces</b> in “Spaces” as <code>Name, area</code> then <b>Generate</b>.</li>
+                <li><b>Select</b> a bubble to edit. <b>Ctrl/⌘-click</b> or <b>Shift-click</b> to multi-select.</li>
+                <li><b>Lasso</b>: hold <b>Shift</b> and drag on background to select an area.</li>
+                <li><b>Group-drag</b>: drag any selected bubble to move the whole selection.</li>
+                <li><b>Matrix</b> to add/remove adjacencies bidirectionally; or use the <b>Dot Matrix</b> and click dots.</li>
+                <li><b>Conflicts</b>: paste expected “necessary” pairs and set long-link tolerance.</li>
+                <li>Arrows render <b>above</b> bubbles so arrowheads remain visible when overlapping.</li>
+              </ol>
+              <div className="mt-3 text-xs text-[#9aa0a6]">
+                Shortcuts: <b>Ctrl/⌘+Z</b> undo • <b>Ctrl/⌘+Y</b> redo • <b>Ctrl/⌘+S</b> save JSON • <b>Delete</b> removes selection/link • <b>A</b> (Ctrl/⌘) select all • <b>Esc</b> clear • Arrows nudge • <b>?</b> cheatsheet.
+              </div>
+            </div>
+          </details>
+
+          {/* Spaces */}
+          <details open className="card">
+            <summary className="cursor-pointer select-none group-title">Spaces (name, area m²)</summary>
+            <div className="mt-3 space-y-2">
+              <div className="flex flex-wrap gap-2">
+                <button className="btn btn-xs" onClick={() => setRawList(SAMPLE_TEXT)}>Load sample</button>
+                <button className="btn btn-xs" onClick={onGenerate}>Generate</button>
+                <button className="btn btn-xs" onClick={updateFromList}>Update from list</button>
+                <label className="text-xs text-[#9aa0a6] flex items-center gap-1">
+                  <input type="checkbox"
+                    checked={updateMatchMode === "name"}
+                    onChange={(e) =>
+                      setUpdateMatchMode(e.target.checked ? "name" : "index")
+                    } /> match by name
+                </label>
+                <label className="text-xs text-[#9aa0a6] flex items-center gap-1">
+                  <input type="checkbox"
+                    checked={updateAreasFromList}
+                    onChange={(e) => setUpdateAreasFromList(e.target.checked)} /> also update areas
+                </label>
+              </div>
+              <textarea
+                className="w-full min-h-[160px] text-sm bg-transparent border rounded-xl border-[#2a2a3a] p-3 outline-none"
+                placeholder={`Example (one per line):\nMatch Admin Room, 90\nVOD Review / Theater, 60`}
+                value={rawList}
+                onChange={(e) => setRawList(e.target.value)}
+              />
+              <p className="text-xs text-[#9aa0a6]">Formats: <code>name, area</code> • <code>name - area</code> • <code>name area</code></p>
+            </div>
+          </details>
+
+          {/* Styles */}
+          <details open className="card">
+            <summary className="cursor-pointer select-none group-title">Styles</summary>
+            <div className="mt-3 space-y-3">
+              {/* Line styles */}
+              {["necessary", "ideal"].map((key) => (
+                <div key={key} className="border border-[#2a2a3a] rounded-xl p-2">
+                  <div className="text-xs opacity-80 mb-2 flex items-center gap-2">
+                    <span className="capitalize">{key}</span>
+                    <button
+                      className={`btn btn-xs ${currentLineType === key ? "bg-white/10" : ""}`}
+                      onClick={() => setCurrentLineType(key)}
+                    >
+                      Use
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <label className="flex items-center gap-1">Color
+                      <input
+                        type="color"
+                        value={styles[key].color}
+                        onChange={(e) =>
+                          setStyles((s) => ({
+                            ...s,
+                            [key]: { ...s[key], color: e.target.value },
+                          }))
+                        }
+                      />
+                    </label>
+                    <label className="flex items-center gap-1">
+                      <input
+                        type="checkbox"
+                        checked={styles[key].dashed}
+                        onChange={(e) =>
+                          setStyles((s) => ({
+                            ...s,
+                            [key]: { ...s[key], dashed: e.target.checked },
+                          }))
+                        }
+                      /> dashed
+                    </label>
+                    <label className="flex items-center gap-1">w
+                      <input
+                        type="number"
+                        min={1}
+                        max={12}
+                        value={styles[key].width}
+                        className="w-14 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
+                        onChange={(e) =>
+                          setStyles((s) => ({
+                            ...s,
+                            [key]: {
+                              ...s[key],
+                              width: Math.max(1, Math.min(12, +e.target.value || 1)),
+                            },
+                          }))
+                        }
+                      />
+                    </label>
+                    <select
+                      className="ui-select"
+                      value={styles[key].headStart}
+                      onChange={(e) =>
+                        setStyles((s) => ({
+                          ...s,
+                          [key]: { ...s[key], headStart: e.target.value },
+                        }))
+                      }
+                    >
+                      {HEAD_SHAPES.map((h) => (
+                        <option key={h} value={h}>{h}</option>
+                      ))}
+                    </select>
+                    <span className="opacity-60">→</span>
+                    <select
+                      className="ui-select"
+                      value={styles[key].headEnd}
+                      onChange={(e) =>
+                        setStyles((s) => ({
+                          ...s,
+                          [key]: { ...s[key], headEnd: e.target.value },
+                        }))
+                      }
+                    >
+                      {HEAD_SHAPES.map((h) => (
+                        <option key={h} value={h}>{h}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              ))}
+
+              {/* Bubbles & Labels */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="border border-[#2a2a3a] rounded-xl p-2">
+                  <div className="text-xs opacity-80 mb-2">Bubbles (bulk)</div>
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <label className="flex items-center gap-1">Fill
+                      <input
+                        type="color"
+                        value={bulkFill}
+                        onChange={(e) => setBulkFill(e.target.value)}
+                        disabled={bulkFillTransparent}
+                      />
+                    </label>
+                    <label className="flex items-center gap-1">
+                      <input
+                        type="checkbox"
+                        checked={bulkFillTransparent}
+                        onChange={(e) => setBulkFillTransparent(e.target.checked)}
+                      /> transparent
+                    </label>
+                    <label className="flex items-center gap-1">Border
+                      <input
+                        type="color"
+                        value={bulkStroke}
+                        onChange={(e) => setBulkStroke(e.target.value)}
+                      />
+                    </label>
+                    <label className="flex items-center gap-1">w
+                      <input
+                        type="number"
+                        min={1}
+                        max={12}
+                        value={bulkStrokeWidth}
+                        className="w-14 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
+                        onChange={(e) =>
+                          setBulkStrokeWidth(Math.max(1, Math.min(12, +e.target.value || 1)))
+                        }
+                      />
+                    </label>
+                    <button className="btn btn-xs" onClick={applyBulkBubbleStylesToAll}>
+                      Apply to all
+                    </button>
+                    <button className="btn btn-xs" onClick={applyBulkBubbleStylesToSelection} disabled={!selectedIds.length}>
+                      Apply to selection
+                    </button>
+                  </div>
+                </div>
+                <div className="border border-[#2a2a3a] rounded-xl p-2">
+                  <div className="text-xs opacity-80 mb-2">Labels (bulk)</div>
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <select
+                      className="ui-select"
+                      value={bulkTextFont}
+                      onChange={(e) => setBulkTextFont(e.target.value)}
+                    >
+                      <option value={FONT_STACKS.Outfit}>Outfit</option>
+                      <option value={FONT_STACKS.Inter}>Inter</option>
+                      <option value={FONT_STACKS.Poppins}>Poppins</option>
+                      <option value={FONT_STACKS.Roboto}>Roboto</option>
+                      <option value={FONT_STACKS.System}>system-ui</option>
+                      <option value={FONT_STACKS.HelveticaNowCondensed}>
+                        Helvetica Now Condensed
+                      </option>
+                    </select>
+                    <input
+                      type="color"
+                      value={bulkTextColor}
+                      onChange={(e) => setBulkTextColor(e.target.value)}
+                    />
+                    <label className="flex items-center gap-1">size
+                      <input
+                        type="number"
+                        min={TEXT_MIN}
+                        max={TEXT_MAX}
+                        value={bulkTextSize}
+                        className="w-14 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
+                        onChange={(e) => setBulkTextSize(clampTextSize(e.target.value))}
+                      />
+                    </label>
+                    <button className="btn btn-xs" onClick={applyBulkTextStylesToAll}>
+                      Apply to all
+                    </button>
+                    <button className="btn btn-xs" onClick={applyBulkTextStylesToSelection} disabled={!selectedIds.length}>
+                      Apply to selection
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Backgrounds */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="border border-[#2a2a2a] rounded-xl p-2">
+                  <div className="text-xs opacity-80 mb-2">Export background</div>
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <label className="flex items-center gap-1">
+                      <input
+                        type="radio"
+                        name="bg-exp"
+                        checked={exportBgMode === "transparent"}
+                        onChange={() => setExportBgMode("transparent")}
+                      /> transparent
+                    </label>
+                    <label className="flex items-center gap-1">
+                      <input
+                        type="radio"
+                        name="bg-exp"
+                        checked={exportBgMode === "white"}
+                        onChange={() => setExportBgMode("white")}
+                      /> white
+                    </label>
+                    <label className="flex items-center gap-1">
+                      <input
+                        type="radio"
+                        name="bg-exp"
+                        checked={exportBgMode === "custom"}
+                        onChange={() => setExportBgMode("custom")}
+                      /> custom
+                    </label>
+                    <input
+                      type="color"
+                      value={exportBgCustom}
+                      onChange={(e) => setExportBgCustom(e.target.value)}
+                      disabled={exportBgMode !== "custom"}
+                    />
+                  </div>
+                </div>
+                <div className="border border-[#2a2a3a] rounded-xl p-2">
+                  <div className="text-xs opacity-80 mb-2">Live background</div>
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <label className="flex items-center gap-1">
+                      <input
+                        type="radio"
+                        name="bg-live"
+                        checked={liveBgMode === "transparent"}
+                        onChange={() => setLiveBgMode("transparent")}
+                      /> transparent
+                    </label>
+                    <label className="flex items-center gap-1">
+                      <input
+                        type="radio"
+                        name="bg-live"
+                        checked={liveBgMode === "white"}
+                        onChange={() => setLiveBgMode("white")}
+                      /> white
+                    </label>
+                    <label className="flex items-center gap-1">
+                      <input
+                        type="radio"
+                        name="bg-live"
+                        checked={liveBgMode === "custom"}
+                        onChange={() => setLiveBgMode("custom")}
+                      /> custom
+                    </label>
+                    <input
+                      type="color"
+                      value={liveBgCustom}
+                      onChange={(e) => setLiveBgCustom(e.target.value)}
+                      disabled={liveBgMode !== "custom"}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </details>
+
+          {/* Layout & Physics */}
+          <details className="card" open>
+            <summary className="cursor-pointer select-none group-title">Layout & Physics</summary>
+            <div className="mt-3 grid grid-cols-1 gap-3">
+              <div className="flex items-center gap-2 text-xs">
+                <span className="opacity-70">Buffer</span>
+                <input type="range" min={0} max={80} step={1} value={buffer} onChange={(e) => setBuffer(+e.target.value)} />
+                <input type="number" min={0} max={80} value={buffer} className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
+                  onChange={(e) => setBuffer(Math.max(0, Math.min(80, +e.target.value || 0)))} />
+                <span className="opacity-70">px</span>
+              </div>
+              <div className="flex items-center gap-2 text-xs">
+                <span className="opacity-70">Arrow overlap</span>
+                <input type="range" min={0} max={60} step={1} value={arrowOverlap} onChange={(e) => setArrowOverlap(+e.target.value)} />
+                <input type="number" min={0} max={200} value={arrowOverlap} className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
+                  onChange={(e) => setArrowOverlap(Math.max(0, Math.min(200, +e.target.value || 0)))} />
+                <span className="opacity-70">px</span>
+              </div>
+              <div className="flex items-center gap-2 text-xs">
+                <span className="opacity-70">Rotation sensitivity</span>
+                <input type="range" min={0} max={100} step={1} value={rotationSensitivity} onChange={(e) => setRotationSensitivity(+e.target.value)} />
+                <input type="number" min={0} max={100} value={rotationSensitivity} className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
+                  onChange={(e) => setRotationSensitivity(Math.max(0, Math.min(100, +e.target.value || 0)))} />
+                <span className="opacity-70">%</span>
+              </div>
+
+              {/* Legend toggle / position */}
+              <div className="flex items-center justify-between">
+                <label className="text-xs flex items-center gap-2">
                   <input
                     type="checkbox"
-                    checked={styles[key].dashed}
-                    onChange={(e) =>
-                      setStyles((s) => ({
-                        ...s,
-                        [key]: {
-                          ...s[key],
-                          dashed: e.target.checked,
-                        },
-                      }))
-                    }
-                  />{" "}
-                  dashed
-                </label>
-                <label className="flex items-center gap-1">
-                  w
-                  <input
-                    type="number"
-                    min={1}
-                    max={12}
-                    value={styles[key].width}
-                    className="w-14 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
-                    onChange={(e) =>
-                      setStyles((s) => ({
-                        ...s,
-                        [key]: {
-                          ...s[key],
-                          width: Math.max(
-                            1,
-                            Math.min(12, +e.target.value || 1)
-                          ),
-                        },
-                      }))
-                    }
+                    checked={showLegend}
+                    onChange={(e) => setShowLegend(e.target.checked)}
                   />
+                  show legend (exportable)
                 </label>
-                <select
-                  className="ui-select"
-                  value={styles[key].headStart}
-                  onChange={(e) =>
-                    setStyles((s) => ({
-                      ...s,
-                      [key]: {
-                        ...s[key],
-                        headStart: e.target.value,
-                      },
-                    }))
-                  }
-                >
-                  {HEAD_SHAPES.map((h) => (
-                    <option key={h} value={h}>
-                      {h}
-                    </option>
-                  ))}
-                </select>
-                <span>→</span>
-                <select
-                  className="ui-select"
-                  value={styles[key].headEnd}
-                  onChange={(e) =>
-                    setStyles((s) => ({
-                      ...s,
-                      [key]: {
-                        ...s[key],
-                        headEnd: e.target.value,
-                      },
-                    }))
-                  }
-                >
-                  {HEAD_SHAPES.map((h) => (
-                    <option key={h} value={h}>
-                      {h}
-                    </option>
-                  ))}
-                </select>
                 <button
-                  className={`ml-2 px-2 py-1 rounded-md border border-[#2a2a3a] ${
-                    currentLineType === key ? "bg-white/10" : ""
-                  }`}
-                  onClick={() => setCurrentLineType(key)}
+                  className="btn btn-xs"
+                  onClick={() => setLegendPos({ x: -560, y: -320 })}
                 >
-                  Use
+                  Reset legend position
                 </button>
               </div>
-            ))}
 
-            {/* Bubble (node) bulk styles */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
-              <span className="opacity-70">Bubbles:</span>
-              <label className="flex items-center gap-1">
-                Fill
-                <input
-                  type="color"
-                  value={bulkFill}
-                  onChange={(e) => setBulkFill(e.target.value)}
-                  disabled={bulkFillTransparent}
-                />
-              </label>
-              <label className="flex items-center gap-1">
-                <input
-                  type="checkbox"
-                  checked={bulkFillTransparent}
-                  onChange={(e) =>
-                    setBulkFillTransparent(e.target.checked)
-                  }
-                />{" "}
-                transparent
-              </label>
-              <label className="flex items-center gap-1">
-                Border
-                <input
-                  type="color"
-                  value={bulkStroke}
-                  onChange={(e) => setBulkStroke(e.target.value)}
-                />
-              </label>
-              <label className="flex items-center gap-1">
-                w
-                <input
-                  type="number"
-                  min={1}
-                  max={12}
-                  value={bulkStrokeWidth}
-                  className="w-14 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
-                  onChange={(e) =>
-                    setBulkStrokeWidth(
-                      Math.max(
-                        1,
-                        Math.min(12, +e.target.value || 1)
-                      )
-                    )
-                  }
-                />
-              </label>
-              <button
-                className="px-2 py-1 rounded-md border border-[#2a2a3a]"
-                onClick={applyBulkBubbleStyles}
-              >
-                Apply to all
-              </button>
+              <div className="flex items-center justify-between">
+                <label className="text-xs flex items-center gap-2">
+                  <input type="checkbox" checked={showMeasurements} onChange={(e) => setShowMeasurements(e.target.checked)} />
+                  show m² labels
+                </label>
+                <div className="flex items-center gap-2">
+                  <button className="btn btn-xs" onClick={() => setPhysics((p) => !p)}>{physics ? "Physics: ON" : "Physics: OFF"}</button>
+                  <button className="btn btn-xs" onClick={() => setNodes([...nodes])}>Re-layout</button>
+                  <button className="btn btn-xs" onClick={detanglePulse}>De-tangle</button>
+                </div>
+              </div>
+              {selectedIds.length > 0 && (
+                <div className="flex items-center justify-between text-xs">
+                  <div className="opacity-80">{selectedIds.length} selected</div>
+                  <div className="flex gap-2">
+                    <button className="btn btn-xs" onClick={() => pinSelection(true)}>Pin selection</button>
+                    <button className="btn btn-xs" onClick={() => pinSelection(false)}>Unpin</button>
+                    <button className="btn btn-xs" onClick={deleteSelection}>Delete selection</button>
+                  </div>
+                </div>
+              )}
             </div>
+          </details>
 
-            {/* Text (label) bulk styles + GLOBAL SCALE SLIDER */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
-              <span className="opacity-70">Labels:</span>
-              <select
-                className="ui-select"
-                value={bulkTextFont}
-                onChange={(e) => setBulkTextFont(e.target.value)}
-              >
-                <option value={FONT_STACKS.Outfit}>Outfit</option>
-                <option value={FONT_STACKS.Inter}>Inter</option>
-                <option value={FONT_STACKS.Poppins}>Poppins</option>
-                <option value={FONT_STACKS.Roboto}>Roboto</option>
-                <option value={FONT_STACKS.System}>system-ui</option>
-                <option value={FONT_STACKS.HelveticaNowCondensed}>
-                  Helvetica Now Condensed (if available)
-                </option>
-              </select>
-              <input
-                type="color"
-                value={bulkTextColor}
-                onChange={(e) => setBulkTextColor(e.target.value)}
+          {/* Adjacency Dot Matrix (triangular) */}
+          <TriangularMatrix
+            nodes={nodes}
+            getLinkTypeBetween={getLinkTypeBetween}
+            setLinkTypeBetween={setLinkTypeBetween}
+            styles={styles}
+            theme={THEME}
+          />
+
+          {/* Adjacency Matrix (editable) */}
+          <details className="card">
+            <summary className="cursor-pointer select-none group-title">Adjacency Matrix (editable)</summary>
+            <div className="mt-3 text-xs">
+              <div className="overflow-auto max-h-[320px] border border-[#2a2a3a] rounded-lg">
+                <table className="min-w-full text-[11px]">
+                  <thead className="sticky top-0 bg-[#151526]">
+                    <tr>
+                      <th className="p-2 text-left">Space \\ Space</th>
+                      {nodes.map((c) => (
+                        <th key={c.id} className="p-2 text-left whitespace-nowrap">{c.name}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {nodes.map((r) => (
+                      <tr key={r.id} className="odd:bg-[#0f0f18] even:bg-[#121220]">
+                        <td className="p-2 font-medium whitespace-nowrap">{r.name}</td>
+                        {nodes.map((c) => {
+                          if (r.id === c.id) {
+                            return <td key={c.id} className="p-2 text-center opacity-40">—</td>;
+                          }
+                          const t = getLinkTypeBetween(r.id, c.id);
+                          return (
+                            <td key={c.id} className="p-1">
+                              <select
+                                className="ui-select w-full"
+                                value={t}
+                                onChange={(e) => setLinkTypeBetween(r.id, c.id, e.target.value)}
+                              >
+                                <option value="none">none</option>
+                                <option value="ideal">ideal</option>
+                                <option value="necessary">necessary</option>
+                              </select>
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="mt-2 opacity-70">Editing any cell creates/removes a <i>single</i> undirected link for that pair.</p>
+            </div>
+          </details>
+
+          {/* Conflicts */}
+          <details className="card">
+            <summary className="cursor-pointer select-none group-title">Conflict Detector</summary>
+            <div className="mt-3 grid gap-3 text-sm">
+              <div className="text-xs text-[#9aa0a6]">
+                <b>Missing "necessary" adjacencies</b>: paste expected pairs (one per line) like <code>A - B</code> or <code>A, B</code>.
+              </div>
+              <textarea
+                className="w-full min-h-[90px] text-sm bg-transparent border rounded-xl border-[#2a2a3a] p-3 outline-none"
+                value={expectedPairsText}
+                onChange={(e) => setExpectedPairsText(e.target.value)}
+                placeholder={`Example:\nEvent Control Room - Broadcast & Media Core\nTech & Asset Management - Engineering & IT`}
               />
-              <label className="flex items-center gap-1">
-                size
-                <input
-                  type="number"
-                  min={TEXT_MIN}
-                  max={TEXT_MAX}
-                  value={bulkTextSize}
-                  className="w-14 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
-                  onChange={(e) =>
-                    setBulkTextSize(clampTextSize(e.target.value))
-                  }
-                />
-              </label>
-              <button
-                className="px-2 py-1 rounded-md border border-[#2a2a3a]"
-                onClick={applyBulkTextStyles}
-              >
-                Apply to all
-              </button>
-
-              {/* NEW: global label scale slider */}
-              <div className="flex items-center gap-1 ml-2">
-                <span className="opacity-70">Scale:</span>
-                <input
-                  type="range"
-                  min={50}
-                  max={200}
-                  step={5}
-                  value={Math.round(labelScale * 100)}
-                  onChange={(e) =>
-                    setLabelScale(+e.target.value / 100)
-                  }
-                />
-                <span className="w-10 text-right">
-                  {Math.round(labelScale * 100)}%
-                </span>
+              <div className="text-xs">
+                {missingNecessary.length === 0 ? (
+                  <div className="text-green-400">No missing necessary pairs (based on your list).</div>
+                ) : (
+                  <div>
+                    <div className="text-red-400">{missingNecessary.length} missing:</div>
+                    <ul className="list-disc pl-5">
+                      {missingNecessary.slice(0, 12).map((m, i) => (
+                        <li key={i}>{m.a.name} — {m.b.name}</li>
+                      ))}
+                    </ul>
+                    {missingNecessary.length > 12 && <div className="opacity-60">…and more</div>}
+                  </div>
+                )}
+              </div>
+              <div className="text-xs flex items-center gap-2">
+                <span className="opacity-70">Long link tolerance</span>
+                <input type="range" min={1.0} max={3.0} step={0.1} value={longFactor}
+                  onChange={(e) => setLongFactor(+e.target.value)} />
+                <span>{longFactor.toFixed(1)}× ideal</span>
+              </div>
+              <div className="text-xs">
+                <span className="opacity-70">Long necessary links flagged:</span>{" "}
+                <b>{longLinkIds.size}</b>
               </div>
             </div>
+          </details>
 
-            {/* Export background */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
-              <span className="opacity-70">Export BG:</span>
-              <label className="flex items-center gap-1">
-                <input
-                  type="radio"
-                  name="bg-exp"
-                  checked={exportBgMode === "transparent"}
-                  onChange={() => setExportBgMode("transparent")}
-                />{" "}
-                transparent
+          {/* Files & Export */}
+          <details className="card">
+            <summary className="cursor-pointer select-none group-title">Files & Export</summary>
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+              <button className="btn btn-xs" onClick={exportSVG}>Export SVG</button>
+              <button className="btn btn-xs" onClick={exportPNG}>Export PNG</button>
+              <button className="btn btn-xs" title="Ctrl/⌘ + S" onClick={saveJSON}>Save JSON</button>
+              <button className="btn btn-xs" onClick={saveJSONAs}>Save As…</button>
+              <button className="btn btn-xs" onClick={openJSON}>Open JSON…</button>
+              <label className="btn btn-xs cursor-pointer">Import JSON
+                <input className="hidden" type="file" accept="application/json" onChange={(e) => e.target.files && importJSON(e.target.files[0])} />
               </label>
-              <label className="flex items-center gap-1">
-                <input
-                  type="radio"
-                  name="bg-exp"
-                  checked={exportBgMode === "white"}
-                  onChange={() => setExportBgMode("white")}
-                />{" "}
-                white
-              </label>
-              <label className="flex items-center gap-1">
-                <input
-                  type="radio"
-                  name="bg-exp"
-                  checked={exportBgMode === "custom"}
-                  onChange={() => setExportBgMode("custom")}
-                />{" "}
-                custom
-              </label>
-              <input
-                type="color"
-                value={exportBgCustom}
-                onChange={(e) =>
-                  setExportBgCustom(e.target.value)
-                }
-                disabled={exportBgMode !== "custom"}
-              />
-            </div>
-
-            {/* Live background */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
-              <span className="opacity-70">Live BG:</span>
-              <label className="flex items-center gap-1">
-                <input
-                  type="radio"
-                  name="bg-live"
-                  checked={liveBgMode === "transparent"}
-                  onChange={() => setLiveBgMode("transparent")}
-                />{" "}
-                transparent
-              </label>
-              <label className="flex items-center gap-1">
-                <input
-                  type="radio"
-                  name="bg-live"
-                  checked={liveBgMode === "white"}
-                  onChange={() => setLiveBgMode("white")}
-                />{" "}
-                white
-              </label>
-              <label className="flex items-center gap-1">
-                <input
-                  type="radio"
-                  name="bg-live"
-                  checked={liveBgMode === "custom"}
-                  onChange={() => setLiveBgMode("custom")}
-                />{" "}
-                custom
-              </label>
-              <input
-                type="color"
-                value={liveBgCustom}
-                onChange={(e) =>
-                  setLiveBgCustom(e.target.value)
-                }
-                disabled={liveBgMode !== "custom"}
-              />
-            </div>
-
-            {/* Buffer */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
-              <span className="opacity-70">Buffer:</span>
-              <input
-                type="range"
-                min={0}
-                max={80}
-                step={1}
-                value={buffer}
-                onChange={(e) => setBuffer(+e.target.value)}
-              />
-              <input
-                type="number"
-                min={0}
-                max={80}
-                value={buffer}
-                className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
-                onChange={(e) =>
-                  setBuffer(
-                    Math.max(
-                      0,
-                      Math.min(80, +e.target.value || 0)
-                    )
-                  )
-                }
-              />
-              <span className="opacity-70">px</span>
-            </div>
-
-            {/* Arrow Overlap */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
-              <span className="opacity-70">Arrow overlap:</span>
-              <input
-                type="range"
-                min={0}
-                max={60}
-                step={1}
-                value={arrowOverlap}
-                onChange={(e) => setArrowOverlap(+e.target.value)}
-              />
-              <input
-                type="number"
-                min={0}
-                max={200}
-                value={arrowOverlap}
-                className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
-                onChange={(e) =>
-                  setArrowOverlap(
-                    Math.max(
-                      0,
-                      Math.min(200, +e.target.value || 0)
-                    )
-                  )
-                }
-              />
-              <span className="opacity-70">px</span>
-            </div>
-
-            {/* Rotation Sensitivity */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
-              <span className="opacity-70">
-                Rotation sensitivity:
-              </span>
-              <input
-                type="range"
-                min={0}
-                max={100}
-                step={1}
-                value={rotationSensitivity}
-                onChange={(e) =>
-                  setRotationSensitivity(+e.target.value)
-                }
-              />
-              <input
-                type="number"
-                min={0}
-                max={100}
-                value={rotationSensitivity}
-                className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
-                onChange={(e) =>
-                  setRotationSensitivity(
-                    Math.max(
-                      0,
-                      Math.min(100, +e.target.value || 0)
-                    )
-                  )
-                }
-              />
-              <span className="opacity-70">%</span>
-            </div>
-
-            {/* Measurements toggle */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
-              <label className="flex items-center gap-1">
-                <input
-                  type="checkbox"
-                  checked={showMeasurements}
-                  onChange={(e) =>
-                    setShowMeasurements(e.target.checked)
-                  }
-                />
-                show m² labels
-              </label>
-            </div>
-
-            {/* Graph actions */}
-            <button
-              className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm"
-              onClick={() => setPhysics((p) => !p)}
-            >
-              {physics ? "Physics: ON" : "Physics: OFF"}
-            </button>
-            <button
-              className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm"
-              onClick={() => setNodes([...nodes])}
-            >
-              Re-Layout
-            </button>
-
-            {/* De-tangle pulse */}
-            <button
-              className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm"
-              onClick={detanglePulse}
-            >
-              De-tangle (explode→shrink)
-            </button>
-
-            {/* Scenes */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-2 py-2 text-xs">
-              <span className="opacity-70">Scene:</span>
-              <select
-                className="ui-select"
-                value={activeSceneId || ""}
-                onChange={(e) =>
-                  setActiveSceneId(e.target.value || null)
-                }
-              >
-                <option value="">(none)</option>
-                {scenes.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))}
-              </select>
               <button
-                className="px-2 py-1 rounded-md border border-[#2a2a3a]"
+                className="btn btn-xs"
                 onClick={() => {
-                  const nm = window.prompt(
-                    "New scene name",
-                    `Scene ${scenes.length + 1}`
-                  );
-                  if (nm != null) addScene(nm);
+                  try {
+                    const raw = localStorage.getItem(AUTOSAVE_KEY);
+                    if (!raw) return alert("No autosave found.");
+                    const saved = JSON.parse(raw);
+                    parseAndLoadJSON(JSON.stringify(saved));
+                  } catch {
+                    alert("Failed to restore autosave.");
+                  }
                 }}
               >
-                Add
-              </button>
-              <button
-                className="px-2 py-1 rounded-md border border-[#2a2a3a]"
-                disabled={!activeSceneId}
-                onClick={() =>
-                  activeSceneId && applyScene(activeSceneId)
-                }
-              >
-                Go
-              </button>
-              <button
-                className="px-2 py-1 rounded-md border border-[#2a2a3a]"
-                disabled={!activeSceneId}
-                onClick={() =>
-                  activeSceneId && updateScene(activeSceneId)
-                }
-              >
-                Update
-              </button>
-              <button
-                className="px-2 py-1 rounded-md border border-[#2a2a3a]"
-                disabled={!activeSceneId}
-                onClick={() =>
-                  activeSceneId && deleteScene(activeSceneId)
-                }
-              >
-                Delete
+                Restore autosave
               </button>
             </div>
+          </details>
 
-            {/* Zoom controls */}
-            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-2 py-2 text-xs">
-              <button
-                className="px-2 py-1 rounded-md border border-[#2a2a3a]"
-                onClick={zoomOut}
-              >
-                −
-              </button>
-              <button
-                className="px-2 py-1 rounded-md border border-[#2a2a3a]"
-                onClick={resetZoom}
-              >
-                Reset
-              </button>
-              <button
-                className="px-2 py-1 rounded-md border border-[#2a2a3a]"
-                onClick={fitToView}
-              >
-                Fit
-              </button>
-              <button
-                className="px-2 py-1 rounded-md border border-[#2a2a3a]"
-                onClick={zoomIn}
-              >
-                +
-              </button>
+          {/* Inspector */}
+          <details className="card" open>
+            <summary className="cursor-pointer select-none group-title">Inspector & Stats</summary>
+            <div className="mt-3 space-y-3">
+              <div className="text-xs text-[#9aa0a6]">
+                {nodes.length} nodes • {links.length} links • {selectedIds.length} selected
+              </div>
+              <div className="border border-[#2a2a3a] rounded-xl p-3">
+                <div className="text-xs opacity-80 mb-2">Node Inspector</div>
+                {!selectedNode ? (
+                  <div className="text-xs text-[#9aa0a6]">
+                    Click a bubble in <em>Select/Drag</em> mode to edit styles. Multi-select supports group pin/delete/style.
+                  </div>
+                ) : (
+                  <div className="space-y-3 text-sm">
+                    <div className="font-medium truncate" title={selectedNode.name}>
+                      {selectedNode.name}
+                      {selectedNode.locked && <span className="ml-2 text-[11px] opacity-80">📌 pinned</span>}
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <InlineEditField label="Name" value={selectedNode.name} onChange={(v) => renameNode(selectedNode.id, v)} />
+                      <InlineEditField label="Area (m²)" value={String(selectedNode.area)} onChange={(v) => changeArea(selectedNode.id, v)} />
+                    </div>
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <label className="flex items-center gap-2">Fill
+                        <input
+                          type="color"
+                          value={selectedNode.fill === "none" ? "#000000" : selectedNode.fill}
+                          onChange={(e) => setNodeFill(selectedNode.id, e.target.value)}
+                          disabled={selectedNode.fill === "none"}
+                        />
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={selectedNode.fill === "none"}
+                          onChange={(e) =>
+                            setNodeFill(
+                              selectedNode.id,
+                              e.target.checked ? "none" : bulkFill
+                            )
+                          }
+                        /> transparent
+                      </label>
+                      <label className="flex items-center gap-2">Border
+                        <input
+                          type="color"
+                          value={selectedNode.stroke || bulkStroke}
+                          onChange={(e) => setNodeStroke(selectedNode.id, e.target.value)}
+                        />
+                      </label>
+                      <label className="flex items-center gap-1">w
+                        <input
+                          type="number"
+                          min={1}
+                          max={12}
+                          value={selectedNode.strokeWidth ?? bulkStrokeWidth}
+                          className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
+                          onChange={(e) => setNodeStrokeW(selectedNode.id, e.target.value)}
+                        />
+                      </label>
+                    </div>
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <select
+                        className="ui-select"
+                        value={selectedNode.textFont || bulkTextFont}
+                        onChange={(e) => setNodeTextFont(selectedNode.id, e.target.value)}
+                      >
+                        <option value={FONT_STACKS.Outfit}>Outfit</option>
+                        <option value={FONT_STACKS.Inter}>Inter</option>
+                        <option value={FONT_STACKS.Poppins}>Poppins</option>
+                        <option value={FONT_STACKS.Roboto}>Roboto</option>
+                        <option value={FONT_STACKS.System}>system-ui</option>
+                        <option value={FONT_STACKS.HelveticaNowCondensed}>Helvetica Now Condensed (if available)</option>
+                      </select>
+                      <input
+                        type="color"
+                        value={selectedNode.textColor || bulkTextColor}
+                        onChange={(e) => setNodeTextColor(selectedNode.id, e.target.value)}
+                      />
+                      <label className="flex items-center gap-1">size
+                        <input
+                          type="number"
+                          min={TEXT_MIN}
+                          max={TEXT_MAX}
+                          value={clampTextSize(selectedNode.textSize ?? bulkTextSize)}
+                          className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
+                          onChange={(e) => setNodeTextSize(selectedNode.id, e.target.value)}
+                        />
+                      </label>
+                    </div>
+                    <div className="flex gap-2 flex-wrap">
+                      <button className="btn btn-xs" onClick={() => setSelectedNodeId(null)}>Done</button>
+                      <button
+                        className="btn btn-xs"
+                        onClick={() => {
+                          setNodeFill(selectedNode.id, bulkFillTransparent ? "none" : bulkFill);
+                          setNodeStroke(selectedNode.id, bulkStroke);
+                          setNodeStrokeW(selectedNode.id, bulkStrokeWidth);
+                          setNodeTextFont(selectedNode.id, bulkTextFont);
+                          setNodeTextColor(selectedNode.id, bulkTextColor);
+                          setNodeTextSize(selectedNode.id, bulkTextSize);
+                        }}
+                      >
+                        Apply bulk defaults
+                      </button>
+                      <button className="btn btn-xs" onClick={() => setNodeLocked(selectedNode.id, !selectedNode.locked)}>
+                        {selectedNode.locked ? "Unpin" : "Pin"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 text-xs max-h-[220px] overflow-auto">
+                {nodes.map((n) => (
+                  <div
+                    key={n.id}
+                    className={`border border-[#2a2a3a] rounded-lg p-2 cursor-pointer ${selectedSet.has(n.id) ? "bg-white/10" : ""}`}
+                    onClick={(e) => {
+                      if (e.ctrlKey || e.metaKey || e.shiftKey) toggleSelect(n.id);
+                      else selectOnly(n.id);
+                      setSelectedNodeId(n.id);
+                    }}
+                  >
+                    <div className="truncate font-medium" title={n.name}>{n.name}</div>
+                    <div className="opacity-70">{n.area} m²</div>
+                    {n.locked && <div className="opacity-70 mt-1">📌 Pinned</div>}
+                  </div>
+                ))}
+              </div>
             </div>
-
-            {/* Fullscreen & Export */}
-            <button
-              className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm"
-              onClick={toggleFullscreen}
-            >
-              {isFullscreen ? "Exit Fullscreen" : "Fullscreen"}
-            </button>
-            <button
-              className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm"
-              onClick={exportSVG}
-            >
-              Export SVG
-            </button>
-            <button
-              className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm"
-              onClick={exportPNG}
-            >
-              Export PNG
-            </button>
-            <button
-              className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm"
-              title="Ctrl/⌘ + S"
-              onClick={saveJSON}
-            >
-              Save JSON
-            </button>
-            <button
-              className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm"
-              onClick={saveJSONAs}
-            >
-              Save As…
-            </button>
-            <button
-              className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm"
-              onClick={openJSON}
-            >
-              Open JSON…
-            </button>
-            <label className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm cursor-pointer">
-              Import JSON (fallback)
-              <input
-                className="hidden"
-                type="file"
-                accept="application/json"
-                onChange={(e) =>
-                  e.target.files && importJSON(e.target.files[0])
-                }
-              />
-            </label>
-          </div>
-        </div>
-      </div>
-
-      {/* Panels */}
-      <div className="mx-auto max-w-[1400px] px-4 mt-4 grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Input list */}
-        <div className="col-span-1 bg-[#121220] rounded-2xl border border-[#2a2a3a] p-4">
-          <div className="flex items-center justify-between gap-2 mb-2">
-            <h2 className="text-sm font-semibold tracking-wide text-[#9aa0a6]">
-              List of Spaces (name, area m²)
-            </h2>
-            <div className="flex gap-2">
-              <button
-                className="px-3 py-1.5 rounded-xl border border-[#2a2a3a] text-xs"
-                onClick={() => setRawList(SAMPLE_TEXT)}
-              >
-                Load Sample
-              </button>
-              <button
-                className="px-3 py-1.5 rounded-xl border border-[#2a2a3a] text-xs"
-                onClick={onGenerate}
-              >
-                Generate Bubbles
-              </button>
-              <button
-                className="px-3 py-1.5 rounded-xl border border-[#2a2a3a] text-xs"
-                onClick={updateFromList}
-              >
-                Update from list
-              </button>
-              <label className="flex items-center gap-1 text-xs text-[#9aa0a6]">
-                <input
-                  type="checkbox"
-                  checked={updateMatchMode === "name"}
-                  onChange={(e) =>
-                    setUpdateMatchMode(
-                      e.target.checked ? "name" : "index"
-                    )
-                  }
-                />{" "}
-                match by name (safer)
-              </label>
-              <label className="flex items-center gap-1 text-xs text-[#9aa0a6]">
-                <input
-                  type="checkbox"
-                  checked={updateAreasFromList}
-                  onChange={(e) =>
-                    setUpdateAreasFromList(e.target.checked)
-                  }
-                />
-                also update areas
-              </label>
-            </div>
-          </div>
-          <textarea
-            className="w-full min-h-[180px] text-sm bg-transparent border rounded-xl border-[#2a2a3a] p-3 outline-none"
-            placeholder={`Example (one per line):
-Match Admin Room, 90
-VOD Review / Theater, 60`}
-            value={rawList}
-            onChange={(e) => setRawList(e.target.value)}
-          />
-          <p className="mt-2 text-xs text-[#9aa0a6]">
-            Formats: <code>name, area</code> •{" "}
-            <code>name - area</code> • <code>name area</code>
-          </p>
+          </details>
         </div>
 
-        {/* Node Inspector (per-bubble styling) */}
-        <div className="col-span-1 bg-[#121220] rounded-2xl border border-[#2a2a3a] p-4">
-          <h2 className="text-sm font-semibold tracking-wide text-[#9aa0a6] mb-2">
-            Node Inspector
-          </h2>
-          {!selectedNode ? (
-            <div className="text-xs text-[#9aa0a6]">
-              Click a bubble in <em>Select/Drag</em> mode to edit
-              per-bubble styles.
-            </div>
-          ) : (
-            <div className="space-y-3 text-sm">
-              <div
-                className="font-medium truncate"
-                title={selectedNode.name}
-              >
-                {selectedNode.name}
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <InlineEditField
-                  label="Name"
-                  value={selectedNode.name}
-                  onChange={(v) =>
-                    renameNode(selectedNode.id, v)
-                  }
-                />
-                <InlineEditField
-                  label="Area (m²)"
-                  value={String(selectedNode.area)}
-                  onChange={(v) =>
-                    changeArea(selectedNode.id, v)
-                  }
-                />
-              </div>
-              <div className="flex items-center gap-3 flex-wrap">
-                <label className="flex items-center gap-2">
-                  Fill
-                  <input
-                    type="color"
-                    value={
-                      selectedNode.fill === "none"
-                        ? "#000000"
-                        : selectedNode.fill
-                    }
-                    onChange={(e) =>
-                      setNodeFill(selectedNode.id, e.target.value)
-                    }
-                    disabled={selectedNode.fill === "none"}
-                  />
-                </label>
-                <label className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={selectedNode.fill === "none"}
-                    onChange={(e) =>
-                      setNodeFill(
-                        selectedNode.id,
-                        e.target.checked ? "none" : bulkFill
-                      )
-                    }
-                  />{" "}
-                  transparent
-                </label>
-                <label className="flex items-center gap-2">
-                  Border
-                  <input
-                    type="color"
-                    value={selectedNode.stroke || bulkStroke}
-                    onChange={(e) =>
-                      setNodeStroke(selectedNode.id, e.target.value)
-                    }
-                  />
-                </label>
-                <label className="flex items-center gap-1">
-                  w
-                  <input
-                    type="number"
-                    min={1}
-                    max={12}
-                    value={
-                      selectedNode.strokeWidth ?? bulkStrokeWidth
-                    }
-                    className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
-                    onChange={(e) =>
-                      setNodeStrokeW(
-                        selectedNode.id,
-                        e.target.value
-                      )
-                    }
-                  />
-                </label>
-              </div>
-              <div className="flex items-center gap-3 flex-wrap">
-                <select
-                  className="ui-select"
-                  value={selectedNode.textFont || bulkTextFont}
-                  onChange={(e) =>
-                    setNodeTextFont(selectedNode.id, e.target.value)
-                  }
-                >
-                  <option value={FONT_STACKS.Outfit}>Outfit</option>
-                  <option value={FONT_STACKS.Inter}>Inter</option>
-                  <option value={FONT_STACKS.Poppins}>Poppins</option>
-                  <option value={FONT_STACKS.Roboto}>Roboto</option>
-                  <option value={FONT_STACKS.System}>system-ui</option>
-                  <option value={FONT_STACKS.HelveticaNowCondensed}>
-                    Helvetica Now Condensed (if available)
-                  </option>
-                </select>
-                <input
-                  type="color"
-                  value={selectedNode.textColor || bulkTextColor}
-                  onChange={(e) =>
-                    setNodeTextColor(selectedNode.id, e.target.value)
-                  }
-                />
-                <label className="flex items-center gap-1">
-                  size
-                  <input
-                    type="number"
-                    min={TEXT_MIN}
-                    max={TEXT_MAX}
-                    value={clampTextSize(
-                      selectedNode.textSize ?? bulkTextSize
-                    )}
-                    className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
-                    onChange={(e) =>
-                      setNodeTextSize(
-                        selectedNode.id,
-                        e.target.value
-                      )
-                    }
-                  />
-                </label>
-              </div>
-              <div className="flex gap-2">
-                <button
-                  className="px-2 py-1 rounded-md border border-[#2a2a3a] text-xs"
-                  onClick={() => setSelectedNodeId(null)}
-                >
-                  Done
-                </button>
-                <button
-                  className="px-2 py-1 rounded-md border border-[#2a2a3a] text-xs"
-                  onClick={() => {
-                    setNodeFill(
-                      selectedNode.id,
-                      bulkFillTransparent ? "none" : bulkFill
-                    );
-                    setNodeStroke(
-                      selectedNode.id,
-                      bulkStroke
-                    );
-                    setNodeStrokeW(
-                      selectedNode.id,
-                      bulkStrokeWidth
-                    );
-                    setNodeTextFont(
-                      selectedNode.id,
-                      bulkTextFont
-                    );
-                    setNodeTextColor(
-                      selectedNode.id,
-                      bulkTextColor
-                    );
-                    setNodeTextSize(
-                      selectedNode.id,
-                      bulkTextSize
-                    );
-                  }}
-                >
-                  Apply bulk defaults to this
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Graph stats */}
-        <div className="col-span-1 bg-[#121220] rounded-2xl border border-[#2a2a3a] p-4">
-          <h2 className="text-sm font-semibold tracking-wide text-[#9aa0a6] mb-2">
-            Current Graph
-          </h2>
-          <div className="text-xs text-[#9aa0a6]">
-            {nodes.length} nodes • {links.length} links
-          </div>
-          <div className="mt-2 grid grid-cols-2 gap-2 text-xs max-h-[220px] overflow-auto">
-            {nodes.map((n) => (
-              <div
-                key={n.id}
-                className="border border-[#2a2a3a] rounded-lg p-2"
-              >
-                <div
-                  className="truncate font-medium"
-                  title={n.name}
-                >
-                  {n.name}
-                </div>
-                <div className="opacity-70">{n.area} m²</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Canvas */}
-      <div className="mx-auto max-w-[1400px] px-4 my-4">
-        <div
-          ref={containerRef}
-          className="relative rounded-2xl border border-[#2a2a3a] overflow-hidden"
-          style={{ background: liveBg }}
-        >
-          <svg
-            ref={svgRef}
-            width={"100%"}
-            height={700}
-            viewBox={`-600 -350 1200 700`}
-            className="block"
+        {/* Canvas column */}
+        <div className="xl:col-span-7">
+          <div
+            ref={containerRef}
+            className="relative rounded-2xl border border-[#2a2a3a] overflow-hidden"
+            style={{ background: liveBg }}
           >
-            <MarkerDefs styles={styles} />
-            <g id="zoomable" transform={zoomTransform.toString()}>
-              {/* --- 1) BUBBLES UNDERLAY (circles only) --- */}
-              {nodes.map((n) => {
-                const r = rOf(n.area);
-                const isSrc = linkSource === n.id && mode === "connect";
-                const hi = hoverId === n.id || isSrc;
-                return (
-                  <g
-                    key={`under-${n.id}`}
-                    transform={`translate(${n.x || 0},${n.y || 0})`}
-                    onPointerDown={(e) => onPointerDownNode(e, n)}
-                    onClick={() => handleConnect(n)}
-                    onMouseEnter={() => setHoverId(n.id)}
-                    onMouseLeave={() => setHoverId(null)}
-                    style={{
-                      cursor: mode === "connect" ? "crosshair" : "grab",
-                    }}
-                  >
-                    <circle
-                      r={r}
-                      fill={
-                        n.fill ??
-                        (bulkFillTransparent ? "none" : bulkFill)
-                      }
-                      stroke={
-                        hi
-                          ? styles.necessary.color
-                          : n.stroke || bulkStroke
-                      }
-                      strokeWidth={n.strokeWidth ?? bulkStrokeWidth}
-                    />
-                    <circle
-                      r={r - 2}
-                      fill="none"
-                      stroke="#2c2c3c"
-                      strokeWidth={1}
-                    />
-                  </g>
-                );
-              })}
+            <svg
+              ref={svgRef}
+              width={"100%"}
+              height={700}
+              viewBox={`-600 -350 1200 700`}
+              className="block"
+              onPointerDown={onPointerDownSvg}
+            >
+              <MarkerDefs styles={styles} />
+              <g id="zoomable" transform={zoomTransform.toString()}>
+                {/* LASSO path */}
+                {lasso.active && lasso.points.length > 1 && (
+                  <polyline
+                    points={lasso.points.map((p) => `${p.x},${p.y}`).join(" ")}
+                    fill="none"
+                    stroke="#22c55e"
+                    strokeWidth={2}
+                    opacity={0.9}
+                  />
+                )}
+                {/* LASSO polygon fill (preview) */}
+                {lasso.active && lasso.points.length > 2 && (
+                  <polygon
+                    points={lasso.points.map((p) => `${p.x},${p.y}`).join(" ")}
+                    fill="#22c55e22"
+                    stroke="none"
+                  />
+                )}
 
-              {/* --- 2) LINKS ABOVE CIRCLES, BELOW LABELS --- */}
-              {links.map((l) => {
-                const s = nodes.find((n) => n.id === l.source);
-                const t = nodes.find((n) => n.id === l.target);
-                if (!s || !t) return null;
-                const dx = t.x - s.x,
-                  dy = t.y - s.y;
-                const dist = Math.hypot(dx, dy) || 1;
-                const nx = dx / dist,
-                  ny = dy / dist;
-                const rs = rOf(s.area),
-                  rt = rOf(t.area);
-
-                // let arrow/line start & end move inside the circle by `arrowOverlap` (clamped per radius)
-                const insetS = Math.max(0, Math.min(arrowOverlap, rs - 2));
-                const insetT = Math.max(0, Math.min(arrowOverlap, rt - 6));
-
-                const x1 = s.x + nx * (rs + 2 - insetS);
-                const y1 = s.y + ny * (rs + 2 - insetS);
-                const x2 = t.x - nx * (rt + 6 - insetT);
-                const y2 = t.y - ny * (rt + 6 - insetT);
-
-                const st = styles[l.type];
-                return (
-                  <g
-                    key={l.id}
-                    onDoubleClick={() => {
-                      pushHistory();
-                      setLinks((p) => p.filter((x) => x.id !== l.id));
-                    }}
-                    onClick={() =>
-                      (lastClickedLinkRef.current = l.id)
-                    }
-                    style={{ pointerEvents: "visibleStroke" }}
-                  >
-                    <line
-                      x1={x1}
-                      y1={y1}
-                      x2={x2}
-                      y2={y2}
-                      stroke={st.color}
-                      strokeWidth={st.width}
-                      strokeDasharray={dashFor(l.type)}
-                      markerStart={markerUrl(l.type, "start")}
-                      markerEnd={markerUrl(l.type, "end")}
-                      opacity={0.98}
-                      strokeLinecap="round"
-                    />
-                  </g>
-                );
-              })}
-
-              {/* --- 3) LABELS & EDITORS ON TOP --- */}
-              {nodes.map((n) => {
-                const r = rOf(n.area);
-                const isSrc = linkSource === n.id && mode === "connect";
-                const labelFont = n.textFont || bulkTextFont;
-                const baseSize = clampTextSize(
-                  n.textSize ?? bulkTextSize
-                );
-                const labelSize = clampTextSize(
-                  baseSize * labelScale
-                );
-                const labelColor = n.textColor || bulkTextColor;
-                const areaSize = Math.max(TEXT_MIN, labelSize - 1);
-                return (
-                  <g
-                    key={`over-${n.id}`}
-                    transform={`translate(${n.x || 0},${n.y || 0})`}
-                    onPointerDown={(e) => onPointerDownNode(e, n)}
-                    onClick={() => handleConnect(n)}
-                    onMouseEnter={() => setHoverId(n.id)}
-                    onMouseLeave={() => setHoverId(null)}
-                    style={{
-                      cursor: mode === "connect" ? "crosshair" : "grab",
-                    }}
-                  >
-                    <text
-                      textAnchor="middle"
-                      dominantBaseline="middle"
-                      className="select-none"
-                      style={{
-                        fill: labelColor,
-                        fontSize: labelSize,
-                        fontWeight: 600,
-                        letterSpacing: 0.4,
-                        fontFamily: labelFont,
-                      }}
+                {/* NODES FIRST (bubbles under) */}
+                {nodes.map((n) => {
+                  const r = rOf(n.area);
+                  const isSrc = linkSource === n.id && mode === "connect";
+                  const hi = hoverId === n.id || isSrc || selectedSet.has(n.id);
+                  const labelFont = n.textFont || bulkTextFont;
+                  const labelColor = n.textColor || bulkTextColor;
+                  const labelSize = clampTextSize(n.textSize ?? bulkTextSize);
+                  const areaSize = Math.max(TEXT_MIN, labelSize - 1);
+                  const warnMissing = missingNodeIdSet.has(n.id);
+                  return (
+                    <g
+                      key={n.id}
+                      transform={`translate(${n.x || 0},${n.y || 0})`}
+                      onPointerDown={(e) => onPointerDownNode(e, n)}
+                      onClick={() => handleConnect(n)}
+                      onMouseEnter={() => setHoverId(n.id)}
+                      onMouseLeave={() => setHoverId(null)}
+                      style={{ cursor: mode === "connect" ? "crosshair" : "grab" }}
                     >
-                      {(() => {
-                        const pad = 10;
-                        const maxW = Math.max(20, (r - pad) * 2);
-                        const lines = wrapToWidth(
-                          n.name,
-                          labelFont,
-                          labelSize,
-                          maxW,
-                          5
-                        );
-                        const gap = Math.max(
-                          2,
-                          Math.round(labelSize * 0.2)
-                        );
-                        const total =
-                          lines.length * labelSize +
-                          (lines.length - 1) * gap;
-                        const startY =
-                          -total / 2 + labelSize * 0.8;
-                        return lines.map((line, i) => (
-                          <tspan
-                            key={i}
-                            x={0}
-                            y={startY + i * (labelSize + gap)}
-                          >
-                            {line}
-                          </tspan>
-                        ));
-                      })()}
-                    </text>
+                      {/* selection highlight ring */}
+                      {selectedSet.has(n.id) && (
+                        <circle r={r + 5} fill="none" stroke="#60a5fa" strokeWidth={2} strokeDasharray="5 4" opacity={0.9} />
+                      )}
 
-                    {showMeasurements && (
+                      {/* conflict (missing necessary) halo */}
+                      {warnMissing && (
+                        <circle r={r + 9} fill="none" stroke="#ef4444" strokeWidth={2} strokeDasharray="3 3" opacity={0.9} />
+                      )}
+
+                      {/* bubble */}
+                      <circle
+                        r={r}
+                        fill={n.fill ?? (bulkFillTransparent ? "none" : bulkFill)}
+                        stroke={hi ? styles.necessary.color : (n.stroke || bulkStroke)}
+                        strokeWidth={n.strokeWidth ?? bulkStrokeWidth}
+                      />
+                      {/* inner faint rim */}
+                      <circle r={r - 2} fill="none" stroke="#2c2c3c" strokeWidth={1} />
+
+                      {/* locked pin dot */}
+                      {n.locked && <circle r={3} cx={r - 10} cy={-r + 10} fill="#22d3ee" />}
+
+                      {/* label */}
                       <text
-                        y={r - 18}
                         textAnchor="middle"
+                        dominantBaseline="middle"
+                        className="select-none"
                         style={{
-                          fill: THEME.subtle,
-                          fontSize: areaSize,
+                          fill: labelColor,
+                          fontSize: labelSize,
+                          fontWeight: 600,
+                          letterSpacing: 0.4,
                           fontFamily: labelFont,
                         }}
                       >
-                        {n.area} m²
+                        {(() => {
+                          const pad = 10;
+                          const maxW = Math.max(20, (r - pad) * 2);
+                          const lines = wrapToWidth(
+                            n.name,
+                            labelFont,
+                            labelSize,
+                            maxW,
+                            5
+                          );
+                          const gap = Math.max(2, Math.round(labelSize * 0.2));
+                          const total =
+                            lines.length * labelSize + (lines.length - 1) * gap;
+                          const startY = -total / 2 + labelSize * 0.8;
+                          return lines.map((line, i) => (
+                            <tspan key={i} x={0} y={startY + i * (labelSize + gap)}>
+                              {line}
+                            </tspan>
+                          ));
+                        })()}
                       </text>
-                    )}
 
-                    {/* disable editor hitboxes while connecting so clicks create links */}
-                    <foreignObject
-                      x={-r}
-                      y={-18}
-                      width={r * 2}
-                      height={36}
-                      data-ignore-export
-                      style={{
-                        pointerEvents:
-                          mode === "connect" ? "none" : "auto",
+                      {showMeasurements && (
+                        <text
+                          y={r - 18}
+                          textAnchor="middle"
+                          style={{
+                            fill: THEME.subtle,
+                            fontSize: areaSize,
+                            fontFamily: labelFont,
+                          }}
+                        >
+                          {n.area} m²
+                        </text>
+                      )}
+
+                      {/* disable editor hitboxes while connecting */}
+                      <foreignObject
+                        x={-r}
+                        y={-18}
+                        width={r * 2}
+                        height={36}
+                        data-ignore-export
+                        style={{ pointerEvents: mode === "connect" ? "none" : "auto" }}
+                      >
+                        <InlineEdit
+                          text={n.name}
+                          onChange={(val) => renameNode(n.id, val)}
+                          className="mx-auto text-center"
+                        />
+                      </foreignObject>
+                      <foreignObject
+                        x={-40}
+                        y={r - 22}
+                        width={80}
+                        height={26}
+                        data-ignore-export
+                        style={{ pointerEvents: mode === "connect" ? "none" : "auto" }}
+                      >
+                        <InlineEdit
+                          text={`${n.area}`}
+                          onChange={(val) => changeArea(n.id, val)}
+                          className="text-center"
+                        />
+                      </foreignObject>
+                    </g>
+                  );
+                })}
+
+                {/* LINKS AFTER (on top of bubbles) */}
+                {links.map((l) => {
+                  const s = nodes.find((n) => n.id === l.source);
+                  const t = nodes.find((n) => n.id === l.target);
+                  if (!s || !t) return null;
+                  const dx = t.x - s.x,
+                    dy = t.y - s.y;
+                  const dist = Math.hypot(dx, dy) || 1;
+                  const nx = dx / dist,
+                    ny = dy / dist;
+                  const rs = rOf(s.area),
+                    rt = rOf(t.area);
+
+                  // let arrow/line start & end move inside the circle by `arrowOverlap` (clamped per radius)
+                  const insetS = Math.max(0, Math.min(arrowOverlap, rs - 2));
+                  const insetT = Math.max(0, Math.min(arrowOverlap, rt - 6));
+
+                  const x1 = s.x + nx * (rs + 2 - insetS);
+                  const y1 = s.y + ny * (rs + 2 - insetS);
+                  const x2 = t.x - nx * (rt + 6 - insetT);
+                  const y2 = t.y - ny * (rt + 6 - insetT);
+
+                  const st = styles[l.type];
+                  const isLong = longLinkIds.has(l.id);
+
+                  return (
+                    <g
+                      key={l.id}
+                      onDoubleClick={() => {
+                        pushHistory();
+                        setLinks((p) => p.filter((x) => x.id !== l.id));
                       }}
+                      onClick={() => (lastClickedLinkRef.current = l.id)}
                     >
-                      <InlineEdit
-                        text={n.name}
-                        onChange={(val) =>
-                          renameNode(n.id, val)
-                        }
-                        className="mx-auto text-center"
+                      {/* main line */}
+                      <line
+                        x1={x1}
+                        y1={y1}
+                        x2={x2}
+                        y2={y2}
+                        stroke={st.color}
+                        strokeWidth={st.width}
+                        strokeDasharray={dashFor(l.type)}
+                        markerStart={markerUrl(l.type, "start")}
+                        markerEnd={markerUrl(l.type, "end")}
+                        opacity={0.98}
                       />
-                    </foreignObject>
-                    <foreignObject
-                      x={-40}
-                      y={r - 22}
-                      width={80}
-                      height={26}
-                      data-ignore-export
-                      style={{
-                        pointerEvents:
-                          mode === "connect" ? "none" : "auto",
-                      }}
-                    >
-                      <InlineEdit
-                        text={`${n.area}`}
-                        onChange={(val) =>
-                          changeArea(n.id, val)
-                        }
-                        className="text-center"
-                      />
-                    </foreignObject>
+                      {/* conflict overlay for long necessary */}
+                      {isLong && l.type === "necessary" && (
+                        <line
+                          x1={x1}
+                          y1={y1}
+                          x2={x2}
+                          y2={y2}
+                          stroke="#ef4444"
+                          strokeWidth={Math.max(2, st.width + 1)}
+                          strokeDasharray="6 3"
+                          opacity={0.9}
+                          data-ignore-export
+                        />
+                      )}
+                    </g>
+                  );
+                })}
+
+                {/* Legend (inside SVG; exportable) */}
+                {showLegend && (
+                  <g
+                    transform={`translate(${legendPos.x},${legendPos.y})`}
+                    onPointerDown={onLegendPointerDown}
+                    style={{ cursor: "move" }}
+                  >
+                    <rect x={0} y={0} width={260} height={84} rx={8} ry={8} fill="#0b0b12" opacity="0.85" stroke={THEME.border} />
+                    <text x={12} y={18} fill="#e6e6f0" fontSize={12} fontWeight={600} fontFamily={bulkTextFont}>Legend</text>
+
+                    {/* Necessary */}
+                    <line
+                      x1={14} y1={36} x2={150} y2={36}
+                      stroke={styles.necessary.color}
+                      strokeWidth={styles.necessary.width}
+                      strokeDasharray={dashFor("necessary")}
+                      markerStart={markerUrl("necessary", "start")}
+                      markerEnd={markerUrl("necessary", "end")}
+                    />
+                    <text x={160} y={39} fill="#e6e6f0" fontSize={12} fontFamily={bulkTextFont}>
+                      Necessary
+                    </text>
+
+                    {/* Ideal */}
+                    <line
+                      x1={14} y1={62} x2={150} y2={62}
+                      stroke={styles.ideal.color}
+                      strokeWidth={styles.ideal.width}
+                      strokeDasharray={dashFor("ideal")}
+                      markerStart={markerUrl("ideal", "start")}
+                      markerEnd={markerUrl("ideal", "end")}
+                    />
+                    <text x={160} y={65} fill="#e6e6f0" fontSize={12} fontFamily={bulkTextFont}>
+                      Ideal
+                    </text>
                   </g>
-                );
-              })}
-            </g>
-          </svg>
+                )}
+              </g>
+            </svg>
 
-          {/* Status pill (not exported) */}
-          <div
-            className="absolute left-3 bottom-3 text-xs text-[#9aa0a6] bg-black/30 rounded-full px-3 py-1"
-            data-ignore-export
-          >
-            Mode:{" "}
-            <span className="font-semibold text-white">
-              {mode}
-            </span>
-            {mode === "connect" && linkSource && (
-              <span> • select a target…</span>
-            )}
-            {selectedNode && (
-              <span>
-                {" "}
-                • Editing:{" "}
-                <span className="text-white">
-                  {selectedNode.name}
-                </span>
-              </span>
-            )}
+            {/* Floating canvas dock (top-right, not exported) */}
+            <div className="absolute right-3 top-3 flex flex-col gap-2" data-ignore-export>
+              <div className="bg-black/35 backdrop-blur p-2 rounded-xl border border-[#2a2a3a] flex flex-col gap-2">
+                <button className="dock-btn btn" title="Zoom out" onClick={zoomOut} aria-label="Zoom out">−</button>
+                <button className="dock-btn btn" title="Reset view" onClick={resetZoom} aria-label="Reset view">⟲</button>
+                <button className="dock-btn btn" title="Fit to view" onClick={fitToView} aria-label="Fit to view">⤢</button>
+                <button className="dock-btn btn" title="Zoom in" onClick={zoomIn} aria-label="Zoom in">＋</button>
+              </div>
+              <div className="bg-black/35 backdrop-blur p-2 rounded-xl border border-[#2a2a3a] flex flex-col gap-2">
+                <button className="dock-btn btn" onClick={() => setPhysics((p) => !p)} title="Toggle physics" aria-label="Toggle physics">{physics ? "⏸" : "▶"}</button>
+                <button className="dock-btn btn" onClick={detanglePulse} title="De-tangle" aria-label="De-tangle">✺</button>
+                <button className="dock-btn btn" onClick={toggleFullscreen} title="Fullscreen" aria-label="Fullscreen">{isFullscreen ? "⤢" : "⤢"}</button>
+                <button className="dock-btn btn" onClick={() => setShowLegend((v) => !v)} title="Toggle legend" aria-label="Toggle legend">
+                  {showLegend ? "Lgnd✓" : "Lgnd"}
+                </button>
+              </div>
+              <div className="bg-black/35 backdrop-blur p-2 rounded-xl border border-[#2a2a3a] flex flex-col gap-2">
+                <button className="dock-btn btn" onClick={exportSVG} aria-label="Export SVG">SVG</button>
+                <button className="dock-btn btn" onClick={exportPNG} aria-label="Export PNG">PNG</button>
+              </div>
+            </div>
+
+            {/* Status pill */}
+            <div className="absolute left-3 bottom-3 text-xs text-[#9aa0a6] bg-black/30 rounded-full px-3 py-1" data-ignore-export>
+              Mode: <span className="font-semibold text-white">{mode}</span>
+              {mode === "connect" && linkSource && <span> • select a target…</span>}
+              {selectedNode && <span> • Editing: <span className="text-white">{selectedNode.name}</span></span>}
+              <span> • Line: <span className="text-white capitalize">{currentLineType}</span></span>
+            </div>
+          </div>
+
+          {/* About */}
+          <div className="mt-3 card">
+            <div className="text-sm">
+              <p><strong>Authored by:</strong> Mark Jay O. Gooc — Architecture student, Batangas State University – TNEU.</p>
+              <p className="opacity-70 text-xs mt-1">All Rights Reserve 2025.</p>
+            </div>
           </div>
         </div>
       </div>
 
-      {/* About section */}
-      <div className="mx-auto max-w-[1400px] px-4 pb-16">
-        <details className="bg-[#121220] rounded-2xl border border-[#2a2a3a] p-4">
-          <summary className="cursor-pointer select-none text-sm font-semibold tracking-wide text-[#9aa0a6]">
-            About this tool
-          </summary>
-          <div className="mt-3 text-sm leading-6 text-[#d8d8e2]">
-            <p>
-              <strong>Authored by:</strong> Mark Jay O. Gooc — Architecture
-              student, Batangas State University – TNEU.{" "}
-            </p>
-            <p className="opacity-80">
-              All Rights Reserve 2025.
-            </p>
+      {/* Keyboard Cheatsheet Modal */}
+      {showHelp && (
+        <div
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setShowHelp(false)}
+          data-ignore-export
+        >
+          <div className="card max-w-xl w-full" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-lg font-semibold">Keyboard Cheatsheet</div>
+              <button className="btn btn-xs" onClick={() => setShowHelp(false)} aria-label="Close">Close</button>
+            </div>
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div>
+                <div><b>?</b> (or Shift+/): Toggle cheatsheet</div>
+                <div><b>Ctrl/⌘+Z</b>: Undo</div>
+                <div><b>Ctrl/⌘+Y</b>: Redo</div>
+                <div><b>Ctrl/⌘+S</b>: Save JSON</div>
+                <div><b>Delete/Backspace</b>: Delete selection / last link</div>
+              </div>
+              <div>
+                <div><b>Ctrl/⌘+A</b>: Select all</div>
+                <div><b>Esc</b>: Clear selection</div>
+                <div><b>Arrows</b>: Nudge selected (Shift for x4)</div>
+                <div><b>Shift+Drag</b>: Lasso select</div>
+                <div><b>Double-click background</b>: Reset zoom</div>
+              </div>
+            </div>
           </div>
-        </details>
-      </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2603,7 +2827,7 @@ function InlineEdit({ text, onChange, className }) {
         className={`pointer-events-auto select-none text-[11px] text-white/90 bg-transparent ${className}`}
         style={{ lineHeight: 1.2 }}
       >
-        {/* double-click to edit */}
+        {/* double-click to edit (invisible overlay, label is the SVG text) */}
       </div>
     );
   }
@@ -2647,6 +2871,168 @@ function InlineEditField({ label, value, onChange }) {
   );
 }
 
+/** Triangular Dot Matrix (upper-triangle) — synced with links
+ *  Click a dot to cycle: none → ideal → necessary → none
+ */
+function TriangularMatrix({
+  nodes,
+  getLinkTypeBetween,
+  setLinkTypeBetween,
+  styles,
+  theme = THEME,
+}) {
+  const [orderBy, setOrderBy] = useState("name"); // 'name' | 'area'
+
+  const ordered = useMemo(() => {
+    const arr = [...nodes];
+    if (orderBy === "area") arr.sort((a, b) => (b.area || 0) - (a.area || 0));
+    else arr.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    return arr;
+  }, [nodes, orderBy]);
+
+  const size = 22; // cell
+  const pad = 10;
+  const dotR = 6;
+  const gridStroke = theme.border;
+
+  const colorFor = (t) => {
+    if (t === "necessary") return styles.necessary.color;
+    if (t === "ideal") return styles.ideal.color;
+    return theme.subtle;
+  };
+
+  return (
+    <div className="card">
+      <div className="flex items-center justify-between">
+        <div className="group-title">Adjacency Dot Matrix (triangular)</div>
+        <div className="text-xs flex items-center gap-2">
+          <span className="opacity-70">Order by</span>
+          <button
+            className={`btn btn-xs ${orderBy === "name" ? "bg-white/10" : ""}`}
+            onClick={() => setOrderBy("name")}
+          >
+            name
+          </button>
+          <button
+            className={`btn btn-xs ${orderBy === "area" ? "bg-white/10" : ""}`}
+            onClick={() => setOrderBy("area")}
+          >
+            area
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-3 overflow-auto" style={{ maxHeight: 360 }}>
+        <svg
+          width={pad + ordered.length * size + 260}
+          height={pad + ordered.length * size + 30}
+        >
+          {/* top labels */}
+          {ordered.map((n, j) => (
+            <text
+              key={"t" + n.id}
+              x={pad + j * size + size / 2}
+              y={10}
+              transform={`rotate(-45 ${pad + j * size + size / 2} 10)`}
+              textAnchor="start"
+              fontSize="10"
+              fill="#cfd3dc"
+              style={{ userSelect: "none" }}
+              title={n.name}
+            >
+              {n.name}
+            </text>
+          ))}
+
+          {/* rows */}
+          {ordered.map((ri, r) => (
+            <g key={"r" + ri.id} transform={`translate(0, ${pad + r * size})`}>
+              {/* left labels */}
+              <text
+                x={0}
+                y={size * 0.8}
+                fontSize="11"
+                fill="#cfd3dc"
+                style={{ userSelect: "none" }}
+              >
+                {ri.name}
+              </text>
+
+              {/* cells (upper triangle incl. diagonal) */}
+              {ordered.map((ci, c) => {
+                if (c < r) return null;
+                const cx = pad + c * size + size / 2 + 1;
+                const cy = size / 2;
+                const isDiag = ri.id === ci.id;
+                const rel = isDiag ? "none" : getLinkTypeBetween(ri.id, ci.id);
+
+                return (
+                  <g
+                    key={ri.id + "|" + ci.id}
+                    transform={`translate(${cx},${cy})`}
+                    style={{ cursor: isDiag ? "default" : "pointer" }}
+                    onClick={() => {
+                      if (isDiag) return;
+                      const next = cycleRel(rel);
+                      setLinkTypeBetween(ri.id, ci.id, next);
+                    }}
+                    title={`${ri.name} × ${ci.name}: ${rel}`}
+                  >
+                    {/* diamond cell frame */}
+                    <rect
+                      x={-size / 2}
+                      y={-size / 2}
+                      width={size}
+                      height={size}
+                      fill="none"
+                      stroke={gridStroke}
+                      transform="rotate(45)"
+                    />
+                    {/* dot */}
+                    {!isDiag ? (
+                      <circle
+                        r={dotR}
+                        fill={colorFor(rel)}
+                        opacity={rel === "none" ? 0.55 : 0.95}
+                      />
+                    ) : (
+                      <circle r={2.5} fill={gridStroke} opacity={0.8} />
+                    )}
+                  </g>
+                );
+              })}
+            </g>
+          ))}
+
+          {/* legend (right side) */}
+          <g transform={`translate(${pad + ordered.length * size + 24}, ${26})`}>
+            {[["necessary", "adjacent"], ["ideal", "nearby"], ["none", "not related"]].map(
+              ([k, label], i) => (
+                <g key={k} transform={`translate(0, ${i * 18})`}>
+                  <circle
+                    r="6"
+                    cx="0"
+                    cy="0"
+                    fill={colorFor(k)}
+                    opacity={k === "none" ? 0.55 : 0.95}
+                  />
+                  <text x="12" y="4" fontSize="11" fill="#cfd3dc">
+                    {label}
+                  </text>
+                </g>
+              )
+            )}
+          </g>
+        </svg>
+      </div>
+
+      <p className="mt-2 text-xs opacity-70">
+        Click a dot to cycle: <b>none</b> → <b>ideal</b> → <b>necessary</b> → <b>none</b>. Changes are reflected in the bubble diagram instantly.
+      </p>
+    </div>
+  );
+}
+
 // --- Precise width-based SVG text wrapping (uses canvas measureText) ---------
 const _measureCtx = (() => {
   try {
@@ -2660,9 +3046,7 @@ const _measureCtx = (() => {
 function measureWidth(s, fontFamily, fontPx) {
   const ctx = _measureCtx;
   if (!ctx) return String(s).length * fontPx * 0.6;
-  ctx.font = `${Math.max(8, fontPx)}px ${
-    fontFamily || "system-ui, Arial"
-  }`;
+  ctx.font = `${Math.max(8, fontPx)}px ${fontFamily || "system-ui, Arial"}`;
   return ctx.measureText(String(s)).width;
 }
 
@@ -2682,10 +3066,7 @@ function wrapToWidth(label, fontFamily, fontPx, maxWidth, maxLines = 5) {
       if (measureWidth(w, fontFamily, fontPx) > maxWidth) {
         let buf = "";
         for (const ch of w) {
-          if (
-            measureWidth(buf + ch, fontFamily, fontPx) <= maxWidth
-          )
-            buf += ch;
+          if (measureWidth(buf + ch, fontFamily, fontPx) <= maxWidth) buf += ch;
           else {
             pushLine(buf);
             buf = ch;
@@ -2697,9 +3078,7 @@ function wrapToWidth(label, fontFamily, fontPx, maxWidth, maxLines = 5) {
         cur = w;
       }
     } else {
-      if (
-        measureWidth(cur + " " + w, fontFamily, fontPx) <= maxWidth
-      ) {
+      if (measureWidth(cur + " " + w, fontFamily, fontPx) <= maxWidth) {
         cur += " " + w;
       } else {
         pushLine(cur);
@@ -2711,44 +3090,28 @@ function wrapToWidth(label, fontFamily, fontPx, maxWidth, maxLines = 5) {
   if (lines.length < maxLines && cur) pushLine(cur);
 
   if (lines.length > maxLines) {
-    return lines
-      .slice(0, maxLines - 1)
-      .concat([lines[maxLines - 1] + "…"]);
+    return lines.slice(0, maxLines - 1).concat([lines[maxLines - 1] + "…"]);
   }
   return lines;
 }
 
-// Smoke tests (console)
+// ---------------- Smoke tests (console) --------------------------------------
 (function runSmokeTests() {
   try {
     const parsed = parseList("A, 10\nB 20\nC-30\nNoArea");
     console.assert(parsed.length === 4, "parseList length");
     console.assert(
-      parsed[0].area === 10 &&
-        parsed[1].area === 20 &&
-        parsed[2].area === 30,
+      parsed[0].area === 10 && parsed[1].area === 20 && parsed[2].area === 30,
       "parseList areas"
     );
     const r = scaleRadius(parsed);
     const r10 = r(10),
       r20 = r(20),
       r30 = r(30);
-    console.assert(
-      r10 <= r20 && r20 <= r30,
-      "scaleRadius monotonic"
-    );
-    console.assert(
-      clampTextSize("16") === 16,
-      "text size string→number"
-    );
-    console.assert(
-      clampTextSize(5) === TEXT_MIN,
-      "text size min clamp"
-    );
-    console.assert(
-      clampTextSize(99) === TEXT_MAX,
-      "text size max clamp"
-    );
+    console.assert(r10 <= r20 && r20 <= r30, "scaleRadius monotonic");
+    console.assert(clampTextSize("16") === 16, "text size string→number");
+    console.assert(clampTextSize(5) === TEXT_MIN, "text size min clamp");
+    console.assert(clampTextSize(99) === TEXT_MAX, "text size max clamp");
   } catch (e) {
     console.warn("Smoke tests warning:", e);
   }
