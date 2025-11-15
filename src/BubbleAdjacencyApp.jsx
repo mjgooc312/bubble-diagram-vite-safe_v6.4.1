@@ -4,10 +4,9 @@ import * as d3 from "d3";
 
 /**
  * Bubble Diagram Builder – Force-directed (React + D3)
- * v4.9.5 — Gradient fills • Floating JSON dock • Auto-connect in conflicts
+ * v4.9.0 — Gradient fills • Floating JSON dock • Auto-connect in conflicts
  *           Key toggles for link type → connect mode • No-overlap even w/ physics OFF
  *           Dynamic label sizing (global + per-node override) • Delete-in-input fix
- *           Added light mode feature and Quick Tour Function
  */
 
 const THEME_DARK = {
@@ -19,11 +18,12 @@ const THEME_DARK = {
 };
 
 const THEME_LIGHT = {
-  bg: "#f5f5f7",
-  surface: "#ffffff",
-  text: "#111827",
-  subtle: "#6b7280",
-  border: "#d1d5db",
+  // a bit softer + more "UI" feeling
+  bg: "#f9fafb",       // page background
+  surface: "#ffffff",  // cards / panels
+  text: "#111827",     // main text
+  subtle: "#6b7280",   // labels / help text
+  border: "#e5e7eb",   // light borders
 };
 
 // Circle radius bounds
@@ -33,6 +33,17 @@ const BASE_R_MAX = 120;
 // Text-size bounds (px)
 const TEXT_MIN = 9;
 const TEXT_MAX = 28;
+
+// Dynamic label size tiers based on AREA (m²)
+// You can edit these thresholds anytime.
+const DYNAMIC_TEXT_TIERS = [
+  { maxArea: 40, size: 11 },   // very small spaces
+  { maxArea: 80, size: 13 },   // small
+  { maxArea: 150, size: 22 },  // medium
+  { maxArea: 300, size: 24 },  // medium-large
+  { maxArea: 600, size: 25 },  // large
+  { maxArea: Infinity, size: 27 }, // very large spaces
+];
 
 // Font stacks
 const FONT_STACKS = {
@@ -421,6 +432,30 @@ export default function BubbleAdjacencyApp() {
     setRotationSensitivity(next.rotationSensitivity ?? 0);
     setAutoLabelSize(next.autoLabelSize ?? true);
   }
+
+// 🔹 Track previous autoLabelSize and, when turning Auto OFF, flatten sizes once
+const prevAutoLabelRef = useRef(autoLabelSize);
+
+useEffect(() => {
+  const prev = prevAutoLabelRef.current;
+  if (prev === autoLabelSize) return;
+  prevAutoLabelRef.current = autoLabelSize;
+
+  // When Auto is turned OFF → make all labels use the same base size (bulkTextSize).
+  if (!autoLabelSize && nodes && nodes.length > 0) {
+    pushHistory();
+    const size = clampTextSize(bulkTextSize);
+    setNodes((prevNodes) =>
+      prevNodes.map((n) => ({
+        ...n,
+        // ❗ Do NOT touch n.autoText here.
+        // We only unify the current fixed size.
+        textSize: size,
+        textSizeManual: false,
+      }))
+    );
+  }
+}, [autoLabelSize, bulkTextSize, nodes]);
 
 // Presets / autosave
 useEffect(() => {
@@ -847,13 +882,15 @@ useEffect(() => {
   }
   function applyBulkTextStylesToAll() {
     pushHistory();
+    const size = clampTextSize(bulkTextSize);
     setNodes((prev) =>
       prev.map((n) => ({
         ...n,
         textFont: bulkTextFont,
         textColor: bulkTextColor,
-        textSize: clampTextSize(bulkTextSize),
-        textSizeManual: false,
+        textSize: size,
+        textSizeManual: true, // mark as manual
+        autoText: false,      // disable dynamic for this node
       }))
     );
   }
@@ -883,6 +920,7 @@ useEffect(() => {
   function applyBulkTextStylesToSelection() {
     if (!selectedIds.length) return;
     pushHistory();
+    const size = clampTextSize(bulkTextSize);
     setNodes((prev) =>
       prev.map((n) =>
         selectedSet.has(n.id)
@@ -890,8 +928,9 @@ useEffect(() => {
               ...n,
               textFont: bulkTextFont,
               textColor: bulkTextColor,
-              textSize: clampTextSize(bulkTextSize),
-              textSizeManual: false,
+              textSize: size,
+              textSizeManual: true, // manual override for these nodes
+              autoText: false,
             }
           : n
       )
@@ -1189,38 +1228,52 @@ useEffect(() => {
       p.map((n) => (n.id === id ? { ...n, strokeWidth: width } : n))
     );
   }
-  function setNodeTextColor(id, c) {
+    function setNodeTextColor(id, c) {
     pushHistory();
     setNodes((p) =>
       p.map((n) => (n.id === id ? { ...n, textColor: c } : n))
     );
   }
-  function setNodeTextSize(id, s) {
-    pushHistory();
-    setNodes((p) =>
-      p.map((n) =>
-        n.id === id
-          ? { ...n, textSize: clampTextSize(s), textSizeManual: true, autoText: false }
-          : n
-      )
-    );
-  }
+
   function setNodeTextFont(id, f) {
     pushHistory();
     setNodes((p) =>
       p.map((n) => (n.id === id ? { ...n, textFont: f } : n))
     );
   }
+
+  function setNodeTextSize(id, v) {
+    pushHistory();
+    const size = clampTextSize(v);
+    setNodes((p) =>
+      p.map((n) =>
+        n.id === id
+          ? {
+              ...n,
+              textSize: size,
+              textSizeManual: true, // mark as manual override
+              autoText: false,      // turn off per-node auto sizing
+            }
+          : n
+      )
+    );
+  }
+
   function setNodeAutoText(id, flag) {
     pushHistory();
     setNodes((p) =>
       p.map((n) =>
         n.id === id
-          ? { ...n, autoText: !!flag, textSizeManual: !flag }
+          ? {
+              ...n,
+              autoText: !!flag,
+              textSizeManual: !flag,
+            }
           : n
       )
     );
   }
+
   function setNodeLocked(id, flag) {
     pushHistory();
     setNodes((p) =>
@@ -1236,6 +1289,7 @@ useEffect(() => {
       )
     );
   }
+
   function pinSelection(flag) {
     if (!selectedIds.length) return;
     pushHistory();
@@ -1900,13 +1954,20 @@ useEffect(() => {
     return s;
   }, [missingNecessary]);
 
-  // Dynamic label size calculator
-  function dynamicLabelSizeForNode(n) {
-    const r = rOf(n.area);
-    const base = Math.round(r / 3.2);
-    return clampTextSize(base);
+  // Dynamic label size calculator (tier-based, easy to understand)
+function dynamicLabelSizeForNode(n) {
+  const a = Math.max(1, toNumber(n.area, 20));
+
+  // Go through the tiers and pick the first one where area <= maxArea
+  for (const tier of DYNAMIC_TEXT_TIERS) {
+    if (a <= tier.maxArea) {
+      return clampTextSize(tier.size);
+    }
   }
 
+  // Fallback (should never hit, but just in case)
+  return clampTextSize(TEXT_MIN);
+}
   // Render bits
   const dashFor = (type) =>
     styles[type].dashed
@@ -1972,7 +2033,7 @@ useEffect(() => {
         .ui-select{
           background:${theme.surface};
           color:${theme.text};
-          border:1px solid ${theme.border};
+          border:2px solid ${theme.border};
           border-radius:10px; padding:6px 8px; font-size:13px; line-height:1.2;
           box-shadow:0 6px 18px rgba(0,0,0,.08);
         }
@@ -1982,50 +2043,171 @@ useEffect(() => {
         }
         .ui-select option{ background:${theme.surface}; color:${theme.text}; }
 
+                /* Cards = soft, premium panels */
         .card{
-          background:${theme.surface};
-          border:1px solid ${theme.border};
-          border-radius:16px;
-          padding:14px;
+          background:${
+            themeMode === "light"
+              ? "linear-gradient(135deg,#ffffff,#f9fafb)"
+              : theme.surface
+          };
+          border:3px solid ${theme.border};
+          border-radius:20px;
+          padding:16px;
+          box-shadow:${
+            themeMode === "light"
+              ? "0 18px 40px rgba(15,23,42,.06)"
+              : "0 20px 45px rgba(0,0,0,.65)"
+          };
         }
+          
+        /* 🔵 Canvas outline → now purple */
+        .canvas-shell{
+          border-radius:20px;
+          border:3px solid ${highContrast ? "#a855f7" : "#a855f7"}; 
+          /* highContrast = cyan, normal = purple */
+        }
+
+        /* Section titles with a small colored dot */
         .group-title{
-          font-size:12px;
-          letter-spacing:.06em;
+          font-size:11px;
+          letter-spacing:.14em;
+          text-transform:uppercase;
           color:${theme.subtle};
           font-weight:600;
+          display:flex;
+          align-items:center;
+          gap:6px;
         }
+        .group-title::before{
+          content:"";
+          display:inline-block;
+          width:6px;
+          height:6px;
+          border-radius:999px;
+          background:${
+            themeMode === "light" ? "#a855f7" : "#c4b5fd"
+          };
+          box-shadow:0 0 0 4px rgba(168,85,247,.12);
+        }
+
+        /* Pills for all buttons */
         .btn{
           border:1px solid ${theme.border};
-          border-radius:12px;
-          padding:8px 12px;
+          border-radius:999px;
+          padding:8px 14px;
           font-size:13px;
-          background:transparent;
+          background:${
+            themeMode === "light"
+              ? "#f9fafb"
+              : "rgba(15,23,42,.95)"
+          };
           color:${theme.text};
+          box-shadow:${
+            themeMode === "light"
+              ? "0 8px 18px rgba(15,23,42,.06)"
+              : "0 8px 18px rgba(0,0,0,.65)"
+          };
+          transition:
+            background .16s ease,
+            box-shadow .16s ease,
+            transform .16s ease;
         }
         .btn:hover{
           background:${
-            themeMode === "light" ? "rgba(15,23,42,.04)" : "rgba(255,255,255,.06)"
+            themeMode === "light"
+              ? "#eef2ff"
+              : "rgba(148,163,184,.22)"
           };
+          box-shadow:${
+            themeMode === "light"
+              ? "0 10px 22px rgba(15,23,42,.09)"
+              : "0 12px 26px rgba(0,0,0,.75)"
+          };
+          transform:translateY(-0.5px);
         }
         .btn:focus{
           outline:3px solid ${highContrast ? "#00D1FF" : "#8b5cf6"};
           outline-offset:2px;
         }
-        .btn-xs{ padding:6px 10px; font-size:12px; border-radius:10px; }
-        .dock-btn{ width:38px; height:38px; display:flex; align-items:center; justify-content:center; border-radius:10px; }
+
+        .btn-xs{
+          padding:5px 10px;
+          font-size:11px;
+          border-radius:999px;
+        }
+
+        .dock-btn{
+          width:38px;
+          height:38px;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          border-radius:999px;
+        }
+        /* Inputs & textareas – soft field look */
+        input[type="text"],
+        input[type="number"],
+        textarea{
+          border-radius:12px;
+          border:2px solid ${theme.border};
+          background:${
+            themeMode === "light" ? "#f9fafb" : "#020617"
+          };
+          transition:
+            border-color .16s ease,
+            box-shadow .16s ease,
+            background .16s ease;
+        }
+        input[type="text"]:focus,
+        input[type="number"]:focus,
+        textarea:focus{
+          border-color:${highContrast ? "#00D1FF" : "#8b5cf6"};
+          box-shadow:0 0 0 1px ${
+            highContrast ? "#00D1FF" : "#8b5cf6"
+          }, 0 10px 25px rgba(15,23,42,.08);
+          outline:none;
+          background:${
+            themeMode === "light" ? "#ffffff" : "#020617"
+          };
+        }
 
         .hc .card{ border-color:#8b5cf6; }
         .hc .btn:hover{ background:rgba(56,189,248,.14); }
+        
       `}</style>
 
       {/* Command bar */}
-      <div className="sticky top-0 z-20 backdrop-blur bg-black/35 border-b border-[#2a2a3a]">
+      <div
+        className="sticky top-0 z-20 backdrop-blur border-b"
+        style={{
+          background:
+            themeMode === "light"
+              ? "rgba(243,244,246,0.92)" // light header when in light mode
+              : "rgba(0,0,0,0.35)",      // dark translucent header in dark mode
+          borderColor: theme.border,
+        }}
+      >
         <div className="mx-auto max-w-[1500px] px-4 py-3 flex items-center gap-3">
-          <div className="text-sm font-semibold tracking-wide text-[#d6d6e2] flex items-center gap-2">
-            Bubble Diagram Builder <span className="text-[11px] opacity-70">v1.0</span>
+          <div
+            className="text-sm font-semibold tracking-wide flex items-center gap-2"
+            style={{ color: theme.text }}
+          >
+            Bubble Diagram Builder{" "}
+            <span
+              className="text-[11px] opacity-70"
+              style={{ color: theme.subtle }}
+            >
+              v1.0
+            </span>
           </div>
-          <div className="text-xs text-[#9aa0a6]">Design mode:</div>
+          <div
+            className="text-xs"
+            style={{ color: theme.subtle }}
+          >
+            Design mode:
+          </div>
           <div className="flex items-center gap-1" role="group" aria-label="Mode">
+            ...
             <button
               className={`btn btn-xs ${mode === "select" ? "bg-white/10" : ""}`}
               onClick={() => setMode("select")}
@@ -2793,11 +2975,11 @@ useEffect(() => {
           </details>
         </div>
 
-        {/* Canvas */}
+                {/* Canvas */}
         <div className="xl:col-span-7">
           <div
             ref={containerRef}
-            className="relative rounded-2xl border border-[#2a2a3a] overflow-hidden"
+            className="relative overflow-hidden canvas-shell"
             style={{ background: liveBg }}
           >
             <svg
@@ -2833,13 +3015,20 @@ useEffect(() => {
                   const r = rOf(n.area);
                   const isSrc = linkSource === n.id && mode === "connect";
                   const hi = hoverId === n.id || isSrc || selectedSet.has(n.id);
+                  const isMissing = missingNodeIdSet.has(n.id);
                   const labelFont = n.textFont || bulkTextFont;
-                  const labelColor = n.textColor || bulkTextColor;
-                  const labelSize = n.autoText ?? autoLabelSize
-                    ? dynamicLabelSizeForNode(n)
-                    : clampTextSize(n.textSize ?? bulkTextSize);
-                  const areaSize = Math.max(TEXT_MIN, labelSize - 1);
-                  const warnMissing = missingNodeIdSet.has(n.id);
+                  const labelColor = n.textColor || bulkTextColor;  
+
+// Global Auto (autoLabelSize) is the master toggle.
+// - If autoLabelSize === false → always use fixed size.
+// - If autoLabelSize === true → dynamic, unless this node's Auto is explicitly off (autoText === false).
+const useDynamic = autoLabelSize && n.autoText !== false;
+
+const labelSize = useDynamic
+  ? dynamicLabelSizeForNode(n)
+  : clampTextSize(n.textSize ?? bulkTextSize);
+
+const areaSize = Math.max(TEXT_MIN, labelSize - 1);
 
                   // gradient coords from angle
                   const angle = (n.grad?.angle ?? bulkGradAngle) * (Math.PI / 180);
@@ -2883,8 +3072,15 @@ useEffect(() => {
                       )}
 
                       {/* conflict halo */}
-                      {warnMissing && (
-                        <circle r={r + 9} fill="none" stroke="#ef4444" strokeWidth={2} strokeDasharray="3 3" opacity={0.9} />
+                      {isMissing && (
+                        <circle
+                          r={r + 9}
+                          fill="none"
+                          stroke="#ef4444"
+                          strokeWidth={2}
+                          strokeDasharray="3 3"
+                          opacity={0.9}
+                        />
                       )}
 
                       {/* bubble */}
@@ -2948,35 +3144,9 @@ useEffect(() => {
   </text>
 )}
 
-                      {/* inline editors (disabled in connect mode) */}
-                      <foreignObject
-                        x={-r}
-                        y={-18}
-                        width={r * 2}
-                        height={36}
-                        data-ignore-export
-                        style={{ pointerEvents: mode === "connect" ? "none" : "auto" }}
-                      >
-                        <InlineEdit
-                          text={n.name}
-                          onChange={(val) => renameNode(n.id, val)}
-                          className="mx-auto text-center"
-                        />
-                      </foreignObject>
-                      <foreignObject
-                        x={-40}
-                        y={r - 22}
-                        width={80}
-                        height={26}
-                        data-ignore-export
-                        style={{ pointerEvents: mode === "connect" ? "none" : "auto" }}
-                      >
-                        <InlineEdit
-                          text={`${n.area}`}
-                          onChange={(val) => changeArea(n.id, val)}
-                          className="text-center"
-                        />
-                      </foreignObject>
+                      {/* inline editors removed to avoid duplicate labels.
+                          Edit name & area via the Inspector panel instead. */}
+
                     </g>
                   );
                 })}
@@ -3038,23 +3208,75 @@ useEffect(() => {
 
             {/* Floating dock (zoom/physics/export/json) */}
             <div className="absolute right-3 top-3 flex flex-col gap-2" data-ignore-export>
-              <div className="bg-black/35 backdrop-blur p-2 rounded-xl border border-[#2a2a3a] flex flex-col gap-2">
+          <div
+            className="backdrop-blur p-2 rounded-xl border flex flex-col gap-2"
+            style={{
+              background:
+                themeMode === "light"
+                  ? "rgba(255,255,255,0.96)"
+                  : "rgba(0,0,0,0.35)",
+              borderColor: theme.border,
+              boxShadow:
+                themeMode === "light"
+                  ? "0 12px 30px rgba(15,23,42,0.10)"
+                  : "0 10px 24px rgba(0,0,0,0.55)",
+            }}
+          >
                 <button className="dock-btn btn" title="Zoom out" onClick={zoomOut} aria-label="Zoom out">−</button>
                 <button className="dock-btn btn" title="Reset view" onClick={resetZoom} aria-label="Reset view">⟲</button>
                 <button className="dock-btn btn" title="Fit to view" onClick={fitToView} aria-label="Fit to view">⤢</button>
                 <button className="dock-btn btn" title="Zoom in" onClick={zoomIn} aria-label="Zoom in">＋</button>
               </div>
-              <div className="bg-black/35 backdrop-blur p-2 rounded-xl border border-[#2a2a3a] flex flex-col gap-2">
+          <div
+            className="backdrop-blur p-2 rounded-xl border flex flex-col gap-2"
+            style={{
+              background:
+                themeMode === "light"
+                  ? "rgba(255,255,255,0.96)"
+                  : "rgba(0,0,0,0.35)",
+              borderColor: theme.border,
+              boxShadow:
+                themeMode === "light"
+                  ? "0 12px 30px rgba(15,23,42,0.10)"
+                  : "0 10px 24px rgba(0,0,0,0.55)",
+            }}
+          >
                 <button className="dock-btn btn" onClick={() => setPhysics((p) => !p)} title="Toggle physics" aria-label="Toggle physics">{physics ? "⏸" : "▶"}</button>
                 <button className="dock-btn btn" onClick={detanglePulse} title="De-tangle" aria-label="De-tangle">✺</button>
                 <button className="dock-btn btn" onClick={toggleFullscreen} title="Fullscreen" aria-label="Fullscreen">{isFullscreen ? "⤢" : "⤢"}</button>
               </div>
-              <div className="bg-black/35 backdrop-blur p-2 rounded-xl border border-[#2a2a3a] flex flex-col gap-2">
+          <div
+            className="backdrop-blur p-2 rounded-xl border flex flex-col gap-2"
+            style={{
+              background:
+                themeMode === "light"
+                  ? "rgba(255,255,255,0.96)"
+                  : "rgba(0,0,0,0.35)",
+              borderColor: theme.border,
+              boxShadow:
+                themeMode === "light"
+                  ? "0 12px 30px rgba(15,23,42,0.10)"
+                  : "0 10px 24px rgba(0,0,0,0.55)",
+            }}
+          >
                 <button className="dock-btn btn" onClick={exportSVG} aria-label="Export SVG">SVG</button>
                 <button className="dock-btn btn" onClick={exportPNG} aria-label="Export PNG">PNG</button>
               </div>
               {/* NEW: floating JSON controls */}
-              <div className="bg-black/35 backdrop-blur p-2 rounded-xl border border-[#2a2a3a] flex flex-col gap-2">
+          <div
+            className="backdrop-blur p-2 rounded-xl border flex flex-col gap-2"
+            style={{
+              background:
+                themeMode === "light"
+                  ? "rgba(255,255,255,0.96)"
+                  : "rgba(0,0,0,0.35)",
+              borderColor: theme.border,
+              boxShadow:
+                themeMode === "light"
+                  ? "0 12px 30px rgba(15,23,42,0.10)"
+                  : "0 10px 24px rgba(0,0,0,0.55)",
+            }}
+          >
                 <button className="dock-btn btn" onClick={openJSON} aria-label="Open JSON">OPEN</button>
                 <button className="dock-btn btn" onClick={saveJSON} aria-label="Save JSON">SAVE</button>
                 <button className="dock-btn btn" onClick={saveJSONAs} aria-label="Save As JSON">S-AS</button>
@@ -3097,18 +3319,10 @@ useEffect(() => {
               <span> • AutoText: <span className="text-white">{autoLabelSize ? "ON" : "OFF"}</span></span>
             </div>
           </div>
-
-          {/* About */}
-          <div className="mt-3 card">
-            <div className="text-sm">
-              <p><strong>Authored by:</strong> Mark Jay O. Gooc — Architecture Student (Batangas State University – TNEU).</p>
-              <p className="opacity-70 text-xs mt-1">All Rights Reserve 2025.</p>
-            </div>
-          </div>
         </div>
       </div>
 
-      {/* Keyboard Cheatsheet Modal */}
+            {/* Keyboard Cheatsheet Modal */}
       {showHelp && (
         <div
           className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50"
@@ -3117,30 +3331,73 @@ useEffect(() => {
           onClick={() => setShowHelp(false)}
           data-ignore-export
         >
-          <div className="card max-w-xl w-full" onClick={(e) => e.stopPropagation()}>
+          <div
+            className="card max-w-xl w-full"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
             <div className="flex items-center justify-between mb-2">
               <div className="text-lg font-semibold">Keyboard Cheatsheet</div>
-              <button className="btn btn-xs" onClick={() => setShowHelp(false)} aria-label="Close">Close</button>
+              <button
+                className="btn btn-xs"
+                onClick={() => setShowHelp(false)}
+                aria-label="Close"
+              >
+                Close
+              </button>
             </div>
+
+            {/* Shortcuts grid */}
             <div className="grid grid-cols-2 gap-3 text-sm">
               <div>
-                <div><b>?</b> (or Shift+/): Toggle cheatsheet</div>
-                <div><b>Ctrl/⌘+Z</b>: Undo</div>
-                <div><b>Ctrl/⌘+Y</b>: Redo</div>
-                <div><b>Ctrl/⌘+S</b>: Save JSON</div>
-                <div><b>Delete/Backspace</b>: Delete selection / last link</div>
+                <div>
+                  <b>?</b> (or Shift+/): Toggle cheatsheet
+                </div>
+                <div>
+                  <b>Ctrl/⌘+Z</b>: Undo
+                </div>
+                <div>
+                  <b>Ctrl/⌘+Y</b>: Redo
+                </div>
+                <div>
+                  <b>Ctrl/⌘+S</b>: Save JSON
+                </div>
+                <div>
+                  <b>Delete/Backspace</b>: Delete selection / last link
+                </div>
               </div>
               <div>
-                <div><b>Ctrl/⌘+A</b>: Select all</div>
-                <div><b>Esc</b>: Clear selection</div>
-                <div><b>Arrows</b>: Nudge selected (Shift for x4)</div>
-                <div><b>Shift+Drag</b>: Lasso select</div>
-                <div><b>1</b> or <b>N</b>: Necessary • <b>2</b> or <b>I</b>: Ideal • <b>Tab</b>: Toggle → Connect</div>
+                <div>
+                  <b>Ctrl/⌘+A</b>: Select all
+                </div>
+                <div>
+                  <b>Esc</b>: Clear selection
+                </div>
+                <div>
+                  <b>Arrows</b>: Nudge selected (Shift for x4)
+                </div>
+                <div>
+                  <b>Shift+Drag</b>: Lasso select
+                </div>
+                <div>
+                  <b>1</b> or <b>N</b>: Necessary • <b>2</b> or <b>I</b>: Ideal •{" "}
+                  <b>Tab</b>: Toggle → Connect
+                </div>
               </div>
+            </div>
+
+            {/* Divider + author info */}
+            <div className="mt-4 pt-3 border-t border-[#2a2a3a] text-[11px] leading-snug opacity-80">
+              <div>
+                <strong>Authored by:</strong> Mark Jay O. Gooc — Architecture
+                Student (Batangas State University – TNEU).
+              </div>
+              <div>All Rights Reserve 2025.</div>
             </div>
           </div>
         </div>
       )}
+
             {/* Onboarding Quick Tour Modal */}
       {showTour && (
         <div
@@ -3223,7 +3480,9 @@ useEffect(() => {
 function InlineEdit({ text, onChange, className }) {
   const [editing, setEditing] = useState(false);
   const [val, setVal] = useState(text);
+
   useEffect(() => setVal(text), [text]);
+
   if (!editing) {
     return (
       <div
@@ -3233,9 +3492,12 @@ function InlineEdit({ text, onChange, className }) {
         }}
         className={`pointer-events-auto select-none text-[11px] text-white/90 bg-transparent ${className}`}
         style={{ lineHeight: 1.2 }}
-      />
+      >
+        {text}
+      </div>
     );
   }
+
   return (
     <input
       autoFocus
