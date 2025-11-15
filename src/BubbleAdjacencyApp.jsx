@@ -1,15 +1,17 @@
-// src/BubbleAdjacencyApp.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as d3 from "d3";
 
 /**
  * Bubble Diagram Builder – Force-directed (React + D3)
- * v4.9.1 — Gradient fills • Floating JSON dock • Auto-connect in conflicts
- *           Key toggles for link type → connect mode • No-overlap even w/ physics OFF
- *           Dynamic label sizing (global + per-node override + global scale) • Delete-in-input fix
- *           Drag fix w/ zoom • Spin speed capped
+ * v4.5a — Arrows above bubbles (layering fix) + Detangle pulse + Connect-mode click fix + Readability tweaks
+ *
+ * • Arrows (links) now render ABOVE bubble circles but BELOW labels/editors.
+ * • “De-tangle (explode→shrink)” button to separate connected bubbles.
+ * • Connect mode: editors don’t block clicks; dragging disabled while connecting.
+ * • High-contrast dropdowns (class .ui-select) for dark UI.
  */
 
+// ---- Theme (UI chrome only; not the canvas background) ----------------------
 const THEME = {
   bg: "#0b0b12",
   surface: "#121220",
@@ -49,20 +51,23 @@ Player Warm-up Pods (Concourse), 130`;
 // ----- Utilities -------------------------------------------------------------
 const uid = () => Math.random().toString(36).slice(2, 9);
 
+/** Coerce to finite number, else fallback */
 function toNumber(v, fallback) {
   const n = typeof v === "string" && v.trim() === "" ? NaN : Number(v);
   return Number.isFinite(n) ? n : fallback;
 }
-
+// normalize a label for name-based matching
 function norm(s) {
   return String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
 }
 
+/** Clamp text size into safe range and coerce to number */
 function clampTextSize(v) {
   const n = toNumber(v, 12);
   return Math.max(TEXT_MIN, Math.min(TEXT_MAX, n));
 }
 
+/** Parse "Name, 120" / "Name - 120" / "Name 120" */
 function parseList(text) {
   return text
     .split(/\r?\n/)
@@ -76,6 +81,7 @@ function parseList(text) {
     });
 }
 
+/** sqrt(area) → [BASE_R_MIN, BASE_R_MAX] */
 function scaleRadius(nodes) {
   const sqrtAreas = nodes.map((n) => Math.sqrt(Math.max(1, n.area || 1)));
   const min = d3.min(sqrtAreas) ?? 1;
@@ -87,6 +93,7 @@ function scaleRadius(nodes) {
   };
 }
 
+// ----- Robust download helper (export SVG/PNG/JSON) -------------------------
 function download(url, filename) {
   try {
     const a = document.createElement("a");
@@ -157,7 +164,9 @@ function MarkerDefs({ styles }) {
           {shape === "diamond" && (
             <polygon
               points="3.5 0, 7 3.5, 3.5 7, 0 3.5"
-              transform={kind === "end" ? "translate(3,0)" : "translate(1,0)"}
+              transform={
+                kind === "end" ? "translate(3,0)" : "translate(1,0)"
+              }
               fill={st.color}
             />
           )}
@@ -193,15 +202,16 @@ function savePresets(obj) {
 }
 
 // ------------------------- Custom spin force ---------------------------------
-function makeSpinForce(level) {
+function makeSpinForce(level /* 0..100 */) {
   let nodes = [];
-  const base = 0.0002;
+  const base = 0.0002; // tuning factor for smoothness
   function force(alpha) {
     if (!level) return;
     const k = base * level * alpha;
     for (const n of nodes) {
       const x = n.x || 0,
         y = n.y || 0;
+      // tangential velocity: (-y, x)
       n.vx += -y * k;
       n.vy += x * k;
     }
@@ -214,9 +224,11 @@ function makeSpinForce(level) {
 
 // ----- Main App --------------------------------------------------------------
 export default function BubbleAdjacencyApp() {
+  // Graph data
   const [nodes, setNodes] = useState([]);
   const [links, setLinks] = useState([]);
 
+  // UI state
   const [rawList, setRawList] = useState("");
   const [mode, setMode] = useState("select");
   const [currentLineType, setCurrentLineType] = useState("necessary");
@@ -224,14 +236,24 @@ export default function BubbleAdjacencyApp() {
   const [hoverId, setHoverId] = useState(null);
   const [selectedNodeId, setSelectedNodeId] = useState(null);
 
+  // Layout physics
   const [physics, setPhysics] = useState(true);
+
+  // Buffer between bubbles
   const [buffer, setBuffer] = useState(6);
-  const [arrowOverlap, setArrowOverlap] = useState(0);
-  const [rotationSensitivity, setRotationSensitivity] = useState(0);
+
+  // arrows can overlap into the circles — in pixels
+  const [arrowOverlap, setArrowOverlap] = useState(0); // 0..40+
+
+  // rotation sensitivity (adds a light "spin" force)
+  const [rotationSensitivity, setRotationSensitivity] = useState(0); // 0..100
   const [showMeasurements, setShowMeasurements] = useState(true);
-  const [explodeFactor, setExplodeFactor] = useState(1);
+
+  // detangle pulse (explode → shrink)
+  const [explodeFactor, setExplodeFactor] = useState(1); // 1 = normal, >1 = expanded
   const explodeTORef = useRef(null);
 
+  // --- Scenes (positions + zoom) ---
   const SCENES_KEY = "bubbleScenes:v1";
   const [scenes, setScenes] = useState(() => {
     try {
@@ -247,8 +269,9 @@ export default function BubbleAdjacencyApp() {
     } catch {}
   }, [scenes]);
   const [updateAreasFromList, setUpdateAreasFromList] = useState(false);
-  const [updateMatchMode, setUpdateMatchMode] = useState("name");
+  const [updateMatchMode, setUpdateMatchMode] = useState("name"); // "name" | "index"
 
+  // Edge style presets (necessary vs ideal)
   const [styles, setStyles] = useState({
     necessary: {
       color: "#8b5cf6",
@@ -266,12 +289,15 @@ export default function BubbleAdjacencyApp() {
     },
   });
 
-  const [exportBgMode, setExportBgMode] = useState("transparent");
+  // Export background (used for exported image files)
+  const [exportBgMode, setExportBgMode] = useState("transparent"); // transparent | white | custom
   const [exportBgCustom, setExportBgCustom] = useState("#ffffff");
 
-  const [liveBgMode, setLiveBgMode] = useState("custom");
-  const [liveBgCustom, setLiveBgCustom] = useState(THEME.surface);
+  // Live preview background (used for on-screen canvas container)
+  const [liveBgMode, setLiveBgMode] = useState("custom"); // transparent | white | custom
+  const [liveBgCustom, setLiveBgCustom] = useState(THEME.surface); // default matches old UI
 
+  // BULK defaults (applied on generate or via "Apply to all")
   const [bulkFill, setBulkFill] = useState("#161625");
   const [bulkFillTransparent, setBulkFillTransparent] = useState(false);
   const [bulkStroke, setBulkStroke] = useState("#2d2d3d");
@@ -280,19 +306,24 @@ export default function BubbleAdjacencyApp() {
   const [bulkTextColor, setBulkTextColor] = useState("#e6e6f0");
   const [bulkTextSize, setBulkTextSize] = useState(12);
 
-  // NEW: global label scale
-  const [labelScale, setLabelScale] = useState(1);
+  // NEW: global label scale (applies to all labels visually)
+  const [labelScale, setLabelScale] = useState(1); // 1 = 100%
 
+  // Refs
   const svgRef = useRef(null);
   const simRef = useRef(null);
   const containerRef = useRef(null);
+  // File handle for JSON (File System Access API)
   const jsonHandleRef = useRef(null);
 
+  // Zoom / Pan
   const zoomBehaviorRef = useRef(null);
   const [zoomTransform, setZoomTransform] = useState(d3.zoomIdentity);
 
+  // Computed radius scale
   const rOf = useMemo(() => scaleRadius(nodes), [nodes]);
 
+  // ---------------------------- History (Undo/Redo) --------------------------
   const historyRef = useRef([]);
   const futureRef = useRef([]);
   const snapshot = () => ({
@@ -302,6 +333,7 @@ export default function BubbleAdjacencyApp() {
     buffer,
     arrowOverlap,
     rotationSensitivity,
+    // note: labelScale not included in undo/redo on purpose (global visual control)
   });
   const pushHistory = () => {
     historyRef.current.push(snapshot());
@@ -330,6 +362,7 @@ export default function BubbleAdjacencyApp() {
     setRotationSensitivity(next.rotationSensitivity ?? 0);
   }
 
+  // ---------------------------- Preset Persistence ---------------------------
   useEffect(() => {
     const p = loadPresets();
     if (!p) return;
@@ -347,7 +380,8 @@ export default function BubbleAdjacencyApp() {
       if (typeof b.bulkStrokeWidth === "number")
         setBulkStrokeWidth(Math.max(1, Math.min(12, b.bulkStrokeWidth)));
       if (typeof b.bulkTextFont === "string") setBulkTextFont(b.bulkTextFont);
-      if (typeof b.bulkTextColor === "string") setBulkTextColor(b.bulkTextColor);
+      if (typeof b.bulkTextColor === "string")
+        setBulkTextColor(b.bulkTextColor);
       if (b.bulkTextSize != null)
         setBulkTextSize(clampTextSize(b.bulkTextSize));
     }
@@ -403,6 +437,7 @@ export default function BubbleAdjacencyApp() {
     labelScale,
   ]);
 
+  // ---------------------------- D3 Force Simulation --------------------------
   useEffect(() => {
     const sim = d3
       .forceSimulation()
@@ -416,6 +451,7 @@ export default function BubbleAdjacencyApp() {
     return () => sim.stop();
   }, []);
 
+  // Re-apply spin force when sensitivity changes
   useEffect(() => {
     const sim = simRef.current;
     if (!sim) return;
@@ -423,6 +459,7 @@ export default function BubbleAdjacencyApp() {
     if (physics && rotationSensitivity > 0) sim.alpha(0.5).restart();
   }, [rotationSensitivity, physics]);
 
+  // Update charge & collide strength when explodeFactor changes (detangle pulse)
   useEffect(() => {
     const sim = simRef.current;
     if (!sim) return;
@@ -431,6 +468,7 @@ export default function BubbleAdjacencyApp() {
     const charge = sim.force("charge");
     charge && charge.strength(baseCharge * mult);
 
+    // also refresh collide with extra cushion
     sim.force(
       "collide",
       d3
@@ -467,7 +505,7 @@ export default function BubbleAdjacencyApp() {
           (l.source.r || BASE_R_MIN) + (l.target.r || BASE_R_MIN);
         const k = l.type === "necessary" ? 1.1 : 1.0;
         const d0 = base * 1.05 * k + 40 + buffer * 1.5;
-        return d0 * (explodeFactor || 1);
+        return d0 * (explodeFactor || 1); // expand when detangling
       })
       .strength((l) => (l.type === "necessary" ? 0.5 : 0.25));
 
@@ -509,6 +547,7 @@ export default function BubbleAdjacencyApp() {
     };
   }, [nodes.length, links, physics, rOf, buffer, explodeFactor]);
 
+  // ---------------------------- Generate / Edit -------------------------------
   function onGenerate() {
     pushHistory();
     const parsed = parseList(rawList || SAMPLE_TEXT);
@@ -556,7 +595,7 @@ export default function BubbleAdjacencyApp() {
       );
       if (parsed.length > nodes.length) {
         const extras = parsed.slice(nodes.length).map((x) => ({
-          id: uid(),
+          id: Math.random().toString(36).slice(2, 9),
           name: x.name,
           area: Math.max(1, +x.area || 20),
           x: (Math.random() - 0.5) * 40,
@@ -573,6 +612,7 @@ export default function BubbleAdjacencyApp() {
       return;
     }
 
+    // default: match by NAME
     setNodes((prev) => {
       const buckets = new Map();
       prev.forEach((n, idx) => {
@@ -602,7 +642,7 @@ export default function BubbleAdjacencyApp() {
           used.add(idx);
         } else {
           extras.push({
-            id: uid(),
+            id: Math.random().toString(36).slice(2, 9),
             name: src.name,
             area: Math.max(1, +src.area || 20),
             x: (Math.random() - 0.5) * 40,
@@ -670,12 +710,14 @@ export default function BubbleAdjacencyApp() {
     );
   }
 
+  // ---------------------------- Dragging -------------------------------------
   const draggingRef = useRef(null);
   const dragStartSnapshotRef = useRef(null);
   function onPointerDownNode(e, node) {
     e.stopPropagation();
     setSelectedNodeId(node.id);
 
+    // do not start drag while in Connect mode (ensures second click creates link)
     if (mode === "connect") return;
 
     draggingRef.current = node.id;
@@ -726,6 +768,7 @@ export default function BubbleAdjacencyApp() {
     simRef.current?.alphaTarget(0);
   }
 
+  // ---------------------------- Node style setters ---------------------------
   function renameNode(id, val) {
     pushHistory();
     setNodes((p) =>
@@ -791,6 +834,7 @@ export default function BubbleAdjacencyApp() {
     );
   }
 
+  // ---------------------------- Keyboard Shortcuts ---------------------------
   const lastClickedLinkRef = useRef(null);
   useEffect(() => {
     const onKey = (e) => {
@@ -825,6 +869,7 @@ export default function BubbleAdjacencyApp() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  // ---------------------------- Scenes API -----------------------------------
   function captureScenePayload() {
     const pos = {};
     for (const n of nodes) pos[n.id] = { x: n.x || 0, y: n.y || 0 };
@@ -842,7 +887,7 @@ export default function BubbleAdjacencyApp() {
     const nm = String(name || "").trim() || `Scene ${scenes.length + 1}`;
     const payload = captureScenePayload();
     const s = {
-      id: uid(),
+      id: Math.random().toString(36).slice(2, 9),
       name: nm,
       ...payload,
     };
@@ -890,6 +935,7 @@ export default function BubbleAdjacencyApp() {
     if (activeSceneId === sceneId) setActiveSceneId(null);
   }
 
+  // ---------------------------- Export helpers -------------------------------
   function getExportBg() {
     if (exportBgMode === "transparent") return null;
     if (exportBgMode === "white") return "#ffffff";
@@ -1067,7 +1113,7 @@ export default function BubbleAdjacencyApp() {
         if (!handle) return;
         const file = await handle.getFile();
         const text = await file.text();
-        jsonHandleRef.current = handle;
+        jsonHandleRef.current = handle; // remember for "Save" back to same file
         parseAndLoadJSON(text);
         return;
       } catch (err) {
@@ -1118,7 +1164,8 @@ export default function BubbleAdjacencyApp() {
           setBulkStrokeWidth(
             Math.max(1, Math.min(12, b.bulkStrokeWidth))
           );
-        if (typeof b.bulkTextFont === "string") setBulkTextFont(b.bulkTextFont);
+        if (typeof b.bulkTextFont === "string")
+          setBulkTextFont(b.bulkTextFont);
         if (typeof b.bulkTextColor === "string")
           setBulkTextColor(b.bulkTextColor);
         if (b.bulkTextSize != null)
@@ -1210,10 +1257,13 @@ export default function BubbleAdjacencyApp() {
     } catch {}
   }
 
+  // ---------------------------- Detangle pulse -------------------------------
   function detanglePulse() {
+    // bump expansion
     if (explodeTORef.current) clearTimeout(explodeTORef.current);
     setExplodeFactor(2.2);
     simRef.current?.alpha(1).restart();
+    // ease back after a short delay
     explodeTORef.current = setTimeout(() => {
       setExplodeFactor(1);
       simRef.current?.alpha(0.6).restart();
@@ -1225,6 +1275,7 @@ export default function BubbleAdjacencyApp() {
     };
   }, []);
 
+  // ---------------------------- Zoom / Pan / Fit -----------------------------
   useEffect(() => {
     const svg = d3.select(svgRef.current);
     const zoom = d3
@@ -1296,6 +1347,7 @@ export default function BubbleAdjacencyApp() {
       );
   }
 
+  // ---------------------------- Fullscreen -----------------------------------
   const [isFullscreen, setIsFullscreen] = useState(false);
   useEffect(() => {
     const onFs = () => setIsFullscreen(!!document.fullscreenElement);
@@ -1312,6 +1364,7 @@ export default function BubbleAdjacencyApp() {
     }
   }
 
+  // ---------------------------- Render ---------------------------------------
   const dashFor = (type) =>
     styles[type].dashed
       ? `${styles[type].width * 2} ${styles[type].width * 2}`
@@ -1338,6 +1391,7 @@ export default function BubbleAdjacencyApp() {
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
     >
+      {/* Global styles: color pills + high-contrast selects */}
       <style data-ignore-export>{`
         :root { color-scheme: dark; }
 
@@ -1355,6 +1409,7 @@ export default function BubbleAdjacencyApp() {
         input[type="color"]::-webkit-color-swatch { border: none; border-radius: 9999px; }
         input[type="color"]::-moz-color-swatch { border: none; border-radius: 9999px; }
 
+        /* --- High-contrast form controls on dark UI --- */
         .ui-select{
           background:#0f0f18;
           color:#e6e6f0;
@@ -1372,18 +1427,885 @@ export default function BubbleAdjacencyApp() {
       `}</style>
 
       {/* Toolbar */}
-      {/* (toolbar code unchanged from previous message, omitted here for brevity in explanation but kept in full file) */}
-      {/* --- START of actual toolbar content --- */}
-      {/* I’m keeping the full toolbar exactly as before, including Label Scale slider */}
-      {/* ... (toolbar JSX identical to previous version, not removing anything) ... */}
+      <div className="sticky top-0 z-10 backdrop-blur bg-black/30 border-b border-[#2a2a3a]">
+        <div className="mx-auto max-w-[1400px] px-4 py-3 flex flex-wrap items-center gap-3">
+          <div className="font-semibold tracking-wide text-sm text-[#9aa0a6]">
+            Bubble Diagram Builder
+          </div>
 
-      {/* For brevity here: please paste the toolbar JSX from the previous version.
-          The main functional change is in the SVG node rendering below. */}
-      {/* ---------- REAL IMPLEMENTATION SHOULD KEEP THE FULL TOOLBAR JSX ---------- */}
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            {/* Modes */}
+            <button
+              className={`px-3 py-2 rounded-xl border ${
+                mode === "select" ? "bg-white/10" : ""
+              } border-[#2a2a3a] text-sm`}
+              onClick={() => setMode("select")}
+            >
+              Select / Drag
+            </button>
+            <button
+              className={`px-3 py-2 rounded-xl border ${
+                mode === "connect" ? "bg-white/10" : ""
+              } border-[#2a2a3a] text-sm`}
+              onClick={() => setMode("connect")}
+            >
+              Connect
+            </button>
+
+            {/* Undo / Redo */}
+            <button
+              className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm"
+              onClick={undo}
+            >
+              Undo
+            </button>
+            <button
+              className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm"
+              onClick={redo}
+            >
+              Redo
+            </button>
+
+            {/* Line style controls */}
+            {["necessary", "ideal"].map((key) => (
+              <div
+                key={key}
+                className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs"
+              >
+                <span className="opacity-70 w-16 capitalize">
+                  {key}
+                </span>
+                <input
+                  type="color"
+                  value={styles[key].color}
+                  title={`${key} color`}
+                  onChange={(e) =>
+                    setStyles((s) => ({
+                      ...s,
+                      [key]: { ...s[key], color: e.target.value },
+                    }))
+                  }
+                />
+                <label className="flex items-center gap-1">
+                  <input
+                    type="checkbox"
+                    checked={styles[key].dashed}
+                    onChange={(e) =>
+                      setStyles((s) => ({
+                        ...s,
+                        [key]: {
+                          ...s[key],
+                          dashed: e.target.checked,
+                        },
+                      }))
+                    }
+                  />{" "}
+                  dashed
+                </label>
+                <label className="flex items-center gap-1">
+                  w
+                  <input
+                    type="number"
+                    min={1}
+                    max={12}
+                    value={styles[key].width}
+                    className="w-14 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
+                    onChange={(e) =>
+                      setStyles((s) => ({
+                        ...s,
+                        [key]: {
+                          ...s[key],
+                          width: Math.max(
+                            1,
+                            Math.min(12, +e.target.value || 1)
+                          ),
+                        },
+                      }))
+                    }
+                  />
+                </label>
+                <select
+                  className="ui-select"
+                  value={styles[key].headStart}
+                  onChange={(e) =>
+                    setStyles((s) => ({
+                      ...s,
+                      [key]: {
+                        ...s[key],
+                        headStart: e.target.value,
+                      },
+                    }))
+                  }
+                >
+                  {HEAD_SHAPES.map((h) => (
+                    <option key={h} value={h}>
+                      {h}
+                    </option>
+                  ))}
+                </select>
+                <span>→</span>
+                <select
+                  className="ui-select"
+                  value={styles[key].headEnd}
+                  onChange={(e) =>
+                    setStyles((s) => ({
+                      ...s,
+                      [key]: {
+                        ...s[key],
+                        headEnd: e.target.value,
+                      },
+                    }))
+                  }
+                >
+                  {HEAD_SHAPES.map((h) => (
+                    <option key={h} value={h}>
+                      {h}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  className={`ml-2 px-2 py-1 rounded-md border border-[#2a2a3a] ${
+                    currentLineType === key ? "bg-white/10" : ""
+                  }`}
+                  onClick={() => setCurrentLineType(key)}
+                >
+                  Use
+                </button>
+              </div>
+            ))}
+
+            {/* Bubble (node) bulk styles */}
+            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
+              <span className="opacity-70">Bubbles:</span>
+              <label className="flex items-center gap-1">
+                Fill
+                <input
+                  type="color"
+                  value={bulkFill}
+                  onChange={(e) => setBulkFill(e.target.value)}
+                  disabled={bulkFillTransparent}
+                />
+              </label>
+              <label className="flex items-center gap-1">
+                <input
+                  type="checkbox"
+                  checked={bulkFillTransparent}
+                  onChange={(e) =>
+                    setBulkFillTransparent(e.target.checked)
+                  }
+                />{" "}
+                transparent
+              </label>
+              <label className="flex items-center gap-1">
+                Border
+                <input
+                  type="color"
+                  value={bulkStroke}
+                  onChange={(e) => setBulkStroke(e.target.value)}
+                />
+              </label>
+              <label className="flex items-center gap-1">
+                w
+                <input
+                  type="number"
+                  min={1}
+                  max={12}
+                  value={bulkStrokeWidth}
+                  className="w-14 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
+                  onChange={(e) =>
+                    setBulkStrokeWidth(
+                      Math.max(
+                        1,
+                        Math.min(12, +e.target.value || 1)
+                      )
+                    )
+                  }
+                />
+              </label>
+              <button
+                className="px-2 py-1 rounded-md border border-[#2a2a3a]"
+                onClick={applyBulkBubbleStyles}
+              >
+                Apply to all
+              </button>
+            </div>
+
+            {/* Text (label) bulk styles + GLOBAL SCALE SLIDER */}
+            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
+              <span className="opacity-70">Labels:</span>
+              <select
+                className="ui-select"
+                value={bulkTextFont}
+                onChange={(e) => setBulkTextFont(e.target.value)}
+              >
+                <option value={FONT_STACKS.Outfit}>Outfit</option>
+                <option value={FONT_STACKS.Inter}>Inter</option>
+                <option value={FONT_STACKS.Poppins}>Poppins</option>
+                <option value={FONT_STACKS.Roboto}>Roboto</option>
+                <option value={FONT_STACKS.System}>system-ui</option>
+                <option value={FONT_STACKS.HelveticaNowCondensed}>
+                  Helvetica Now Condensed (if available)
+                </option>
+              </select>
+              <input
+                type="color"
+                value={bulkTextColor}
+                onChange={(e) => setBulkTextColor(e.target.value)}
+              />
+              <label className="flex items-center gap-1">
+                size
+                <input
+                  type="number"
+                  min={TEXT_MIN}
+                  max={TEXT_MAX}
+                  value={bulkTextSize}
+                  className="w-14 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
+                  onChange={(e) =>
+                    setBulkTextSize(clampTextSize(e.target.value))
+                  }
+                />
+              </label>
+              <button
+                className="px-2 py-1 rounded-md border border-[#2a2a3a]"
+                onClick={applyBulkTextStyles}
+              >
+                Apply to all
+              </button>
+
+              {/* NEW: global label scale slider */}
+              <div className="flex items-center gap-1 ml-2">
+                <span className="opacity-70">Scale:</span>
+                <input
+                  type="range"
+                  min={50}
+                  max={200}
+                  step={5}
+                  value={Math.round(labelScale * 100)}
+                  onChange={(e) =>
+                    setLabelScale(+e.target.value / 100)
+                  }
+                />
+                <span className="w-10 text-right">
+                  {Math.round(labelScale * 100)}%
+                </span>
+              </div>
+            </div>
+
+            {/* Export background */}
+            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
+              <span className="opacity-70">Export BG:</span>
+              <label className="flex items-center gap-1">
+                <input
+                  type="radio"
+                  name="bg-exp"
+                  checked={exportBgMode === "transparent"}
+                  onChange={() => setExportBgMode("transparent")}
+                />{" "}
+                transparent
+              </label>
+              <label className="flex items-center gap-1">
+                <input
+                  type="radio"
+                  name="bg-exp"
+                  checked={exportBgMode === "white"}
+                  onChange={() => setExportBgMode("white")}
+                />{" "}
+                white
+              </label>
+              <label className="flex items-center gap-1">
+                <input
+                  type="radio"
+                  name="bg-exp"
+                  checked={exportBgMode === "custom"}
+                  onChange={() => setExportBgMode("custom")}
+                />{" "}
+                custom
+              </label>
+              <input
+                type="color"
+                value={exportBgCustom}
+                onChange={(e) =>
+                  setExportBgCustom(e.target.value)
+                }
+                disabled={exportBgMode !== "custom"}
+              />
+            </div>
+
+            {/* Live background */}
+            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
+              <span className="opacity-70">Live BG:</span>
+              <label className="flex items-center gap-1">
+                <input
+                  type="radio"
+                  name="bg-live"
+                  checked={liveBgMode === "transparent"}
+                  onChange={() => setLiveBgMode("transparent")}
+                />{" "}
+                transparent
+              </label>
+              <label className="flex items-center gap-1">
+                <input
+                  type="radio"
+                  name="bg-live"
+                  checked={liveBgMode === "white"}
+                  onChange={() => setLiveBgMode("white")}
+                />{" "}
+                white
+              </label>
+              <label className="flex items-center gap-1">
+                <input
+                  type="radio"
+                  name="bg-live"
+                  checked={liveBgMode === "custom"}
+                  onChange={() => setLiveBgMode("custom")}
+                />{" "}
+                custom
+              </label>
+              <input
+                type="color"
+                value={liveBgCustom}
+                onChange={(e) =>
+                  setLiveBgCustom(e.target.value)
+                }
+                disabled={liveBgMode !== "custom"}
+              />
+            </div>
+
+            {/* Buffer */}
+            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
+              <span className="opacity-70">Buffer:</span>
+              <input
+                type="range"
+                min={0}
+                max={80}
+                step={1}
+                value={buffer}
+                onChange={(e) => setBuffer(+e.target.value)}
+              />
+              <input
+                type="number"
+                min={0}
+                max={80}
+                value={buffer}
+                className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
+                onChange={(e) =>
+                  setBuffer(
+                    Math.max(
+                      0,
+                      Math.min(80, +e.target.value || 0)
+                    )
+                  )
+                }
+              />
+              <span className="opacity-70">px</span>
+            </div>
+
+            {/* Arrow Overlap */}
+            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
+              <span className="opacity-70">Arrow overlap:</span>
+              <input
+                type="range"
+                min={0}
+                max={60}
+                step={1}
+                value={arrowOverlap}
+                onChange={(e) => setArrowOverlap(+e.target.value)}
+              />
+              <input
+                type="number"
+                min={0}
+                max={200}
+                value={arrowOverlap}
+                className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
+                onChange={(e) =>
+                  setArrowOverlap(
+                    Math.max(
+                      0,
+                      Math.min(200, +e.target.value || 0)
+                    )
+                  )
+                }
+              />
+              <span className="opacity-70">px</span>
+            </div>
+
+            {/* Rotation Sensitivity */}
+            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
+              <span className="opacity-70">
+                Rotation sensitivity:
+              </span>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={1}
+                value={rotationSensitivity}
+                onChange={(e) =>
+                  setRotationSensitivity(+e.target.value)
+                }
+              />
+              <input
+                type="number"
+                min={0}
+                max={100}
+                value={rotationSensitivity}
+                className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
+                onChange={(e) =>
+                  setRotationSensitivity(
+                    Math.max(
+                      0,
+                      Math.min(100, +e.target.value || 0)
+                    )
+                  )
+                }
+              />
+              <span className="opacity-70">%</span>
+            </div>
+
+            {/* Measurements toggle */}
+            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-3 py-2 text-xs">
+              <label className="flex items-center gap-1">
+                <input
+                  type="checkbox"
+                  checked={showMeasurements}
+                  onChange={(e) =>
+                    setShowMeasurements(e.target.checked)
+                  }
+                />
+                show m² labels
+              </label>
+            </div>
+
+            {/* Graph actions */}
+            <button
+              className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm"
+              onClick={() => setPhysics((p) => !p)}
+            >
+              {physics ? "Physics: ON" : "Physics: OFF"}
+            </button>
+            <button
+              className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm"
+              onClick={() => setNodes([...nodes])}
+            >
+              Re-Layout
+            </button>
+
+            {/* De-tangle pulse */}
+            <button
+              className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm"
+              onClick={detanglePulse}
+            >
+              De-tangle (explode→shrink)
+            </button>
+
+            {/* Scenes */}
+            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-2 py-2 text-xs">
+              <span className="opacity-70">Scene:</span>
+              <select
+                className="ui-select"
+                value={activeSceneId || ""}
+                onChange={(e) =>
+                  setActiveSceneId(e.target.value || null)
+                }
+              >
+                <option value="">(none)</option>
+                {scenes.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                className="px-2 py-1 rounded-md border border-[#2a2a3a]"
+                onClick={() => {
+                  const nm = window.prompt(
+                    "New scene name",
+                    `Scene ${scenes.length + 1}`
+                  );
+                  if (nm != null) addScene(nm);
+                }}
+              >
+                Add
+              </button>
+              <button
+                className="px-2 py-1 rounded-md border border-[#2a2a3a]"
+                disabled={!activeSceneId}
+                onClick={() =>
+                  activeSceneId && applyScene(activeSceneId)
+                }
+              >
+                Go
+              </button>
+              <button
+                className="px-2 py-1 rounded-md border border-[#2a2a3a]"
+                disabled={!activeSceneId}
+                onClick={() =>
+                  activeSceneId && updateScene(activeSceneId)
+                }
+              >
+                Update
+              </button>
+              <button
+                className="px-2 py-1 rounded-md border border-[#2a2a3a]"
+                disabled={!activeSceneId}
+                onClick={() =>
+                  activeSceneId && deleteScene(activeSceneId)
+                }
+              >
+                Delete
+              </button>
+            </div>
+
+            {/* Zoom controls */}
+            <div className="flex items-center gap-2 border border-[#2a2a3a] rounded-xl px-2 py-2 text-xs">
+              <button
+                className="px-2 py-1 rounded-md border border-[#2a2a3a]"
+                onClick={zoomOut}
+              >
+                −
+              </button>
+              <button
+                className="px-2 py-1 rounded-md border border-[#2a2a3a]"
+                onClick={resetZoom}
+              >
+                Reset
+              </button>
+              <button
+                className="px-2 py-1 rounded-md border border-[#2a2a3a]"
+                onClick={fitToView}
+              >
+                Fit
+              </button>
+              <button
+                className="px-2 py-1 rounded-md border border-[#2a2a3a]"
+                onClick={zoomIn}
+              >
+                +
+              </button>
+            </div>
+
+            {/* Fullscreen & Export */}
+            <button
+              className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm"
+              onClick={toggleFullscreen}
+            >
+              {isFullscreen ? "Exit Fullscreen" : "Fullscreen"}
+            </button>
+            <button
+              className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm"
+              onClick={exportSVG}
+            >
+              Export SVG
+            </button>
+            <button
+              className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm"
+              onClick={exportPNG}
+            >
+              Export PNG
+            </button>
+            <button
+              className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm"
+              title="Ctrl/⌘ + S"
+              onClick={saveJSON}
+            >
+              Save JSON
+            </button>
+            <button
+              className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm"
+              onClick={saveJSONAs}
+            >
+              Save As…
+            </button>
+            <button
+              className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm"
+              onClick={openJSON}
+            >
+              Open JSON…
+            </button>
+            <label className="px-3 py-2 rounded-xl border border-[#2a2a3a] text-sm cursor-pointer">
+              Import JSON (fallback)
+              <input
+                className="hidden"
+                type="file"
+                accept="application/json"
+                onChange={(e) =>
+                  e.target.files && importJSON(e.target.files[0])
+                }
+              />
+            </label>
+          </div>
+        </div>
+      </div>
 
       {/* Panels */}
-      {/* (panels code unchanged – List of Spaces, Node Inspector, Graph list) */}
-      {/* ... paste same panels JSX as previous version ... */}
+      <div className="mx-auto max-w-[1400px] px-4 mt-4 grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* Input list */}
+        <div className="col-span-1 bg-[#121220] rounded-2xl border border-[#2a2a3a] p-4">
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <h2 className="text-sm font-semibold tracking-wide text-[#9aa0a6]">
+              List of Spaces (name, area m²)
+            </h2>
+            <div className="flex gap-2">
+              <button
+                className="px-3 py-1.5 rounded-xl border border-[#2a2a3a] text-xs"
+                onClick={() => setRawList(SAMPLE_TEXT)}
+              >
+                Load Sample
+              </button>
+              <button
+                className="px-3 py-1.5 rounded-xl border border-[#2a2a3a] text-xs"
+                onClick={onGenerate}
+              >
+                Generate Bubbles
+              </button>
+              <button
+                className="px-3 py-1.5 rounded-xl border border-[#2a2a3a] text-xs"
+                onClick={updateFromList}
+              >
+                Update from list
+              </button>
+              <label className="flex items-center gap-1 text-xs text-[#9aa0a6]">
+                <input
+                  type="checkbox"
+                  checked={updateMatchMode === "name"}
+                  onChange={(e) =>
+                    setUpdateMatchMode(
+                      e.target.checked ? "name" : "index"
+                    )
+                  }
+                />{" "}
+                match by name (safer)
+              </label>
+              <label className="flex items-center gap-1 text-xs text-[#9aa0a6]">
+                <input
+                  type="checkbox"
+                  checked={updateAreasFromList}
+                  onChange={(e) =>
+                    setUpdateAreasFromList(e.target.checked)
+                  }
+                />
+                also update areas
+              </label>
+            </div>
+          </div>
+          <textarea
+            className="w-full min-h-[180px] text-sm bg-transparent border rounded-xl border-[#2a2a3a] p-3 outline-none"
+            placeholder={`Example (one per line):
+Match Admin Room, 90
+VOD Review / Theater, 60`}
+            value={rawList}
+            onChange={(e) => setRawList(e.target.value)}
+          />
+          <p className="mt-2 text-xs text-[#9aa0a6]">
+            Formats: <code>name, area</code> •{" "}
+            <code>name - area</code> • <code>name area</code>
+          </p>
+        </div>
+
+        {/* Node Inspector (per-bubble styling) */}
+        <div className="col-span-1 bg-[#121220] rounded-2xl border border-[#2a2a3a] p-4">
+          <h2 className="text-sm font-semibold tracking-wide text-[#9aa0a6] mb-2">
+            Node Inspector
+          </h2>
+          {!selectedNode ? (
+            <div className="text-xs text-[#9aa0a6]">
+              Click a bubble in <em>Select/Drag</em> mode to edit
+              per-bubble styles.
+            </div>
+          ) : (
+            <div className="space-y-3 text-sm">
+              <div
+                className="font-medium truncate"
+                title={selectedNode.name}
+              >
+                {selectedNode.name}
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <InlineEditField
+                  label="Name"
+                  value={selectedNode.name}
+                  onChange={(v) =>
+                    renameNode(selectedNode.id, v)
+                  }
+                />
+                <InlineEditField
+                  label="Area (m²)"
+                  value={String(selectedNode.area)}
+                  onChange={(v) =>
+                    changeArea(selectedNode.id, v)
+                  }
+                />
+              </div>
+              <div className="flex items-center gap-3 flex-wrap">
+                <label className="flex items-center gap-2">
+                  Fill
+                  <input
+                    type="color"
+                    value={
+                      selectedNode.fill === "none"
+                        ? "#000000"
+                        : selectedNode.fill
+                    }
+                    onChange={(e) =>
+                      setNodeFill(selectedNode.id, e.target.value)
+                    }
+                    disabled={selectedNode.fill === "none"}
+                  />
+                </label>
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={selectedNode.fill === "none"}
+                    onChange={(e) =>
+                      setNodeFill(
+                        selectedNode.id,
+                        e.target.checked ? "none" : bulkFill
+                      )
+                    }
+                  />{" "}
+                  transparent
+                </label>
+                <label className="flex items-center gap-2">
+                  Border
+                  <input
+                    type="color"
+                    value={selectedNode.stroke || bulkStroke}
+                    onChange={(e) =>
+                      setNodeStroke(selectedNode.id, e.target.value)
+                    }
+                  />
+                </label>
+                <label className="flex items-center gap-1">
+                  w
+                  <input
+                    type="number"
+                    min={1}
+                    max={12}
+                    value={
+                      selectedNode.strokeWidth ?? bulkStrokeWidth
+                    }
+                    className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
+                    onChange={(e) =>
+                      setNodeStrokeW(
+                        selectedNode.id,
+                        e.target.value
+                      )
+                    }
+                  />
+                </label>
+              </div>
+              <div className="flex items-center gap-3 flex-wrap">
+                <select
+                  className="ui-select"
+                  value={selectedNode.textFont || bulkTextFont}
+                  onChange={(e) =>
+                    setNodeTextFont(selectedNode.id, e.target.value)
+                  }
+                >
+                  <option value={FONT_STACKS.Outfit}>Outfit</option>
+                  <option value={FONT_STACKS.Inter}>Inter</option>
+                  <option value={FONT_STACKS.Poppins}>Poppins</option>
+                  <option value={FONT_STACKS.Roboto}>Roboto</option>
+                  <option value={FONT_STACKS.System}>system-ui</option>
+                  <option value={FONT_STACKS.HelveticaNowCondensed}>
+                    Helvetica Now Condensed (if available)
+                  </option>
+                </select>
+                <input
+                  type="color"
+                  value={selectedNode.textColor || bulkTextColor}
+                  onChange={(e) =>
+                    setNodeTextColor(selectedNode.id, e.target.value)
+                  }
+                />
+                <label className="flex items-center gap-1">
+                  size
+                  <input
+                    type="number"
+                    min={TEXT_MIN}
+                    max={TEXT_MAX}
+                    value={clampTextSize(
+                      selectedNode.textSize ?? bulkTextSize
+                    )}
+                    className="w-16 bg-transparent border border-[#2a2a3a] rounded px-1 py-0.5"
+                    onChange={(e) =>
+                      setNodeTextSize(
+                        selectedNode.id,
+                        e.target.value
+                      )
+                    }
+                  />
+                </label>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  className="px-2 py-1 rounded-md border border-[#2a2a3a] text-xs"
+                  onClick={() => setSelectedNodeId(null)}
+                >
+                  Done
+                </button>
+                <button
+                  className="px-2 py-1 rounded-md border border-[#2a2a3a] text-xs"
+                  onClick={() => {
+                    setNodeFill(
+                      selectedNode.id,
+                      bulkFillTransparent ? "none" : bulkFill
+                    );
+                    setNodeStroke(
+                      selectedNode.id,
+                      bulkStroke
+                    );
+                    setNodeStrokeW(
+                      selectedNode.id,
+                      bulkStrokeWidth
+                    );
+                    setNodeTextFont(
+                      selectedNode.id,
+                      bulkTextFont
+                    );
+                    setNodeTextColor(
+                      selectedNode.id,
+                      bulkTextColor
+                    );
+                    setNodeTextSize(
+                      selectedNode.id,
+                      bulkTextSize
+                    );
+                  }}
+                >
+                  Apply bulk defaults to this
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Graph stats */}
+        <div className="col-span-1 bg-[#121220] rounded-2xl border border-[#2a2a3a] p-4">
+          <h2 className="text-sm font-semibold tracking-wide text-[#9aa0a6] mb-2">
+            Current Graph
+          </h2>
+          <div className="text-xs text-[#9aa0a6]">
+            {nodes.length} nodes • {links.length} links
+          </div>
+          <div className="mt-2 grid grid-cols-2 gap-2 text-xs max-h-[220px] overflow-auto">
+            {nodes.map((n) => (
+              <div
+                key={n.id}
+                className="border border-[#2a2a3a] rounded-lg p-2"
+              >
+                <div
+                  className="truncate font-medium"
+                  title={n.name}
+                >
+                  {n.name}
+                </div>
+                <div className="opacity-70">{n.area} m²</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
 
       {/* Canvas */}
       <div className="mx-auto max-w-[1400px] px-4 my-4">
@@ -1401,7 +2323,7 @@ export default function BubbleAdjacencyApp() {
           >
             <MarkerDefs styles={styles} />
             <g id="zoomable" transform={zoomTransform.toString()}>
-              {/* 1) Bubbles */}
+              {/* --- 1) BUBBLES UNDERLAY (circles only) --- */}
               {nodes.map((n) => {
                 const r = rOf(n.area);
                 const isSrc = linkSource === n.id && mode === "connect";
@@ -1441,7 +2363,7 @@ export default function BubbleAdjacencyApp() {
                 );
               })}
 
-              {/* 2) Links */}
+              {/* --- 2) LINKS ABOVE CIRCLES, BELOW LABELS --- */}
               {links.map((l) => {
                 const s = nodes.find((n) => n.id === l.source);
                 const t = nodes.find((n) => n.id === l.target);
@@ -1454,6 +2376,7 @@ export default function BubbleAdjacencyApp() {
                 const rs = rOf(s.area),
                   rt = rOf(t.area);
 
+                // let arrow/line start & end move inside the circle by `arrowOverlap` (clamped per radius)
                 const insetS = Math.max(0, Math.min(arrowOverlap, rs - 2));
                 const insetT = Math.max(0, Math.min(arrowOverlap, rt - 6));
 
@@ -1492,9 +2415,10 @@ export default function BubbleAdjacencyApp() {
                 );
               })}
 
-              {/* 3) Labels ONLY (no foreignObject editors now) */}
+              {/* --- 3) LABELS & EDITORS ON TOP --- */}
               {nodes.map((n) => {
                 const r = rOf(n.area);
+                const isSrc = linkSource === n.id && mode === "connect";
                 const labelFont = n.textFont || bulkTextFont;
                 const baseSize = clampTextSize(
                   n.textSize ?? bulkTextSize
@@ -1572,12 +2496,53 @@ export default function BubbleAdjacencyApp() {
                         {n.area} m²
                       </text>
                     )}
+
+                    {/* disable editor hitboxes while connecting so clicks create links */}
+                    <foreignObject
+                      x={-r}
+                      y={-18}
+                      width={r * 2}
+                      height={36}
+                      data-ignore-export
+                      style={{
+                        pointerEvents:
+                          mode === "connect" ? "none" : "auto",
+                      }}
+                    >
+                      <InlineEdit
+                        text={n.name}
+                        onChange={(val) =>
+                          renameNode(n.id, val)
+                        }
+                        className="mx-auto text-center"
+                      />
+                    </foreignObject>
+                    <foreignObject
+                      x={-40}
+                      y={r - 22}
+                      width={80}
+                      height={26}
+                      data-ignore-export
+                      style={{
+                        pointerEvents:
+                          mode === "connect" ? "none" : "auto",
+                      }}
+                    >
+                      <InlineEdit
+                        text={`${n.area}`}
+                        onChange={(val) =>
+                          changeArea(n.id, val)
+                        }
+                        className="text-center"
+                      />
+                    </foreignObject>
                   </g>
                 );
               })}
             </g>
           </svg>
 
+          {/* Status pill (not exported) */}
           <div
             className="absolute left-3 bottom-3 text-xs text-[#9aa0a6] bg-black/30 rounded-full px-3 py-1"
             data-ignore-export
@@ -1602,16 +2567,28 @@ export default function BubbleAdjacencyApp() {
         </div>
       </div>
 
-      {/* About */}
-      {/* ... same About section as before ... */}
+      {/* About section */}
+      <div className="mx-auto max-w-[1400px] px-4 pb-16">
+        <details className="bg-[#121220] rounded-2xl border border-[#2a2a3a] p-4">
+          <summary className="cursor-pointer select-none text-sm font-semibold tracking-wide text-[#9aa0a6]">
+            About this tool
+          </summary>
+          <div className="mt-3 text-sm leading-6 text-[#d8d8e2]">
+            <p>
+              <strong>Authored by:</strong> Mark Jay O. Gooc — Architecture
+              student, Batangas State University – TNEU.{" "}
+            </p>
+            <p className="opacity-80">
+              All Rights Reserve 2025.
+            </p>
+          </div>
+        </details>
+      </div>
     </div>
   );
 }
 
-/* InlineEdit + InlineEditField + wrapToWidth helpers
-   can be left here even if InlineEdit is no longer used elsewhere.
-   Keeping them in case you want inline editors again later. */
-
+// ----- Small components ------------------------------------------------------
 function InlineEdit({ text, onChange, className }) {
   const [editing, setEditing] = useState(false);
   const [val, setVal] = useState(text);
@@ -1625,7 +2602,9 @@ function InlineEdit({ text, onChange, className }) {
         }}
         className={`pointer-events-auto select-none text-[11px] text-white/90 bg-transparent ${className}`}
         style={{ lineHeight: 1.2 }}
-      />
+      >
+        {/* double-click to edit */}
+      </div>
     );
   }
   return (
@@ -1668,6 +2647,7 @@ function InlineEditField({ label, value, onChange }) {
   );
 }
 
+// --- Precise width-based SVG text wrapping (uses canvas measureText) ---------
 const _measureCtx = (() => {
   try {
     const c = document.createElement("canvas");
@@ -1686,6 +2666,7 @@ function measureWidth(s, fontFamily, fontPx) {
   return ctx.measureText(String(s)).width;
 }
 
+/** Wrap a label to a specific max pixel width using canvas text metrics. */
 function wrapToWidth(label, fontFamily, fontPx, maxWidth, maxLines = 5) {
   const words = String(label).split(/\s+/).filter(Boolean);
   const lines = [];
@@ -1737,6 +2718,7 @@ function wrapToWidth(label, fontFamily, fontPx, maxWidth, maxLines = 5) {
   return lines;
 }
 
+// Smoke tests (console)
 (function runSmokeTests() {
   try {
     const parsed = parseList("A, 10\nB 20\nC-30\nNoArea");
