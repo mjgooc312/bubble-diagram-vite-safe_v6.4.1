@@ -5,13 +5,15 @@ const THEME_LIGHT = {
   surface: "#ffffff",
   text: "#111827",
   subtle: "#6b7280",
-  border: "#d1d5db",
+  border: "#e5e7eb",
+  accent: "#a855f7",      // purple accent
+  accentSoft: "#f5e9ff",  // soft purple tint
 };
 
 export default function BubbleMakerMaintenance() {
   const bubblesRef = useRef(null);
 
-  // create bubbles once
+  // background bubbles only
   useEffect(() => {
     const container = bubblesRef.current;
     if (!container) return;
@@ -43,7 +45,6 @@ export default function BubbleMakerMaintenance() {
       created.push(bubble);
     }
 
-    // clean up on unmount
     return () => {
       created.forEach((b) => b.remove());
     };
@@ -51,7 +52,6 @@ export default function BubbleMakerMaintenance() {
 
   return (
     <>
-      {/* local styles – still using your theme */}
       <style>{`
         :root {
           --bm-bg: ${THEME_LIGHT.bg};
@@ -59,6 +59,8 @@ export default function BubbleMakerMaintenance() {
           --bm-text: ${THEME_LIGHT.text};
           --bm-subtle: ${THEME_LIGHT.subtle};
           --bm-border: ${THEME_LIGHT.border};
+          --bm-accent: ${THEME_LIGHT.accent};
+          --bm-accent-soft: ${THEME_LIGHT.accentSoft};
         }
 
         html, body, #root {
@@ -69,7 +71,7 @@ export default function BubbleMakerMaintenance() {
           min-height: 100%;
           font-family: system-ui, -apple-system, BlinkMacSystemFont,
             "SF Pro Text", "Segoe UI", sans-serif;
-          background: var(--bm-bg);
+          background: radial-gradient(circle at top left, #ffffff, var(--bm-bg));
           color: var(--bm-text);
           display: flex;
           align-items: center;
@@ -90,7 +92,7 @@ export default function BubbleMakerMaintenance() {
           position: absolute;
           border-radius: 9999px;
           background: radial-gradient(circle at 30% 30%, #ffffff, #e5e7eb);
-          border: 1px solid rgba(209, 213, 219, 0.8);
+          border: 1px solid rgba(209, 213, 219, 0.9);
           opacity: 0.45;
           filter: blur(0.3px);
           animation-name: bm-floatUp;
@@ -109,10 +111,12 @@ export default function BubbleMakerMaintenance() {
           background: var(--bm-surface);
           border-radius: 24px;
           border: 1px solid var(--bm-border);
-          padding: 32px 28px;
-          max-width: 420px;
-          width: min(90vw, 420px);
-          box-shadow: 0 18px 45px rgba(15, 23, 42, 0.08);
+          padding: 32px 28px 26px;
+          max-width: 460px;
+          width: min(92vw, 460px);
+          box-shadow:
+            0 18px 45px rgba(15, 23, 42, 0.1),
+            0 0 0 1px rgba(17, 24, 39, 0.02);
           backdrop-filter: blur(6px);
         }
 
@@ -124,18 +128,18 @@ export default function BubbleMakerMaintenance() {
           border-radius: 999px;
           font-size: 11px;
           font-weight: 500;
-          background: #f9fafb;
-          border: 1px solid var(--bm-border);
-          color: var(--bm-subtle);
+          background: var(--bm-accent-soft);
+          border: 1px solid rgba(168, 85, 247, 0.35);
+          color: var(--bm-accent);
           margin-bottom: 12px;
         }
 
         .bm-badge-dot {
-          width: 6px;
-          height: 6px;
+          width: 7px;
+          height: 7px;
           border-radius: 999px;
-          background: #22c55e33;
-          box-shadow: 0 0 0 4px #22c55e11;
+          background: var(--bm-accent);
+          box-shadow: 0 0 0 4px rgba(168, 85, 247, 0.22);
         }
 
         .bm-title {
@@ -143,6 +147,12 @@ export default function BubbleMakerMaintenance() {
           font-weight: 700;
           letter-spacing: -0.02em;
           margin-bottom: 6px;
+        }
+
+        .bm-title span {
+          background: linear-gradient(120deg, #a855f7, #6366f1);
+          -webkit-background-clip: text;
+          color: transparent;
         }
 
         .bm-subtitle {
@@ -158,22 +168,22 @@ export default function BubbleMakerMaintenance() {
           gap: 10px;
           padding: 10px 12px;
           border-radius: 12px;
-          border: 1px dashed var(--bm-border);
-          background: #f9fafb;
-          margin-bottom: 10px;
+          border: 1px dashed rgba(168, 85, 247, 0.45);
+          background: var(--bm-accent-soft);
+          margin-bottom: 6px;
         }
 
         .bm-status-icon {
           width: 22px;
           height: 22px;
           border-radius: 999px;
-          border: 1px solid var(--bm-border);
+          border: 1px solid rgba(168, 85, 247, 0.3);
           display: flex;
           align-items: center;
           justify-content: center;
           font-size: 12px;
-          color: var(--bm-subtle);
-          background: var(--bm-surface);
+          color: var(--bm-accent);
+          background: #ffffff;
         }
 
         .bm-status-text {
@@ -181,11 +191,15 @@ export default function BubbleMakerMaintenance() {
           color: var(--bm-subtle);
         }
 
-        .bm-footer {
+        .bm-note {
           font-size: 11px;
           color: var(--bm-subtle);
           opacity: 0.9;
-          margin-top: 6px;
+          margin-top: 10px;
+        }
+
+        .bm-note strong {
+          color: var(--bm-accent);
         }
       `}</style>
 
@@ -198,22 +212,25 @@ export default function BubbleMakerMaintenance() {
             <span>Bubble Maker v1.0</span>
           </div>
 
-          <h1 className="bm-title">We’re doing a quick refresh</h1>
+          <h1 className="bm-title">
+            We’re doing a quick <span>refresh</span>
+          </h1>
+
           <p className="bm-subtitle">
             The app is temporarily in maintenance mode while we recalibrate the
-            bubbles. You can safely close this window and come back in a bit.
+            bubbles. You can safely close this window and check back in a bit.
           </p>
 
           <div className="bm-status-box">
             <div className="bm-status-icon">◎</div>
             <div className="bm-status-text">
-              Status: <strong>Maintenance</strong> — core systems are healthy,
-              visuals are updating.
+              Status: <strong>Maintenance</strong> — systems are healthy, visuals
+              are updating.
             </div>
           </div>
 
-          <p className="bm-footer">
-            Bubble Maker v1.0 · UI maintenance screen · Theme: <code>LIGHT</code>
+          <p className="bm-note">
+            <strong>All Rights Reserve 2025.</strong>
           </p>
         </main>
       </div>
