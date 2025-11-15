@@ -2875,7 +2875,39 @@ export default function BubbleAdjacencyApp() {
                           {n.area} m²
                         </text>
                       )}
+
+                      {/* inline editors (disabled in connect mode) */}
+                      <foreignObject
+                        x={-r}
+                        y={-18}
+                        width={r * 2}
+                        height={36}
+                        data-ignore-export
+                        style={{ pointerEvents: mode === "connect" ? "none" : "auto" }}
+                      >
+                        <InlineEdit
+                          text={n.name}
+                          onChange={(val) => renameNode(n.id, val)}
+                          className="mx-auto text-center"
+                        />
+                      </foreignObject>
+                      <foreignObject
+                        x={-40}
+                        y={r - 22}
+                        width={80}
+                        height={26}
+                        data-ignore-export
+                        style={{ pointerEvents: mode === "connect" ? "none" : "auto" }}
+                      >
+                        <InlineEdit
+                          text={`${n.area}`}
+                          onChange={(val) => changeArea(n.id, val)}
+                          className="text-center"
+                        />
+                      </foreignObject>
                     </g>
+                  );
+                })}
 
                 {/* LINKS (above bubbles) */}
                 {links.map((l) => {
