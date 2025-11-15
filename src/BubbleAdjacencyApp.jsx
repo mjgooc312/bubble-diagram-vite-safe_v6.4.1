@@ -5,18 +5,16 @@ import * as d3 from "d3";
  * Bubble Diagram Builder – Force-directed (React + D3)
  * v4.7.0 — v1.0 label • Multi-select + Lasso • Pin/Lock • Adjacency Matrix • Conflict detector
  * Autosave/Recovery • Keyboard Cheatsheet (?) • High-contrast mode • Arrow layer above bubbles
- * Legend toggle (draggable, included in export) • Triangular Dot Matrix (synced)
  *
  * New in this build:
  * 1) "v1.0" label in header next to title.
  * 2) Multi-select + lasso (Shift+drag on background). Move as a group; style or delete many.
  * 3) Lock/Pin nodes (per-node or bulk for selection). Locked nodes are fixed against physics.
- * 4) Adjacency Matrix (editable) + Triangular Dot Matrix (click-to-cycle).
+ * 4) Adjacency Matrix (editable) to create/remove links bidirectionally.
  * 5) Conflict detector: expected "necessary" pairs + long-link warnings with highlight overlay.
  * 6) Autosave every 45s to localStorage + quick restore on load.
  * 7) Keyboard cheatsheet overlay with '?' (or Shift+/). Also: A=Select all, Esc=Clear, Arrows=Nudge.
  * 8) Accessibility: High-contrast mode toggle, bigger focus rings, keyboardable operations.
- * 9) Legend toggle: draggable legend lives in the SVG (export-safe) and mirrors your styles.
  */
 
 // ---- Theme (UI chrome only; not the canvas background) ----------------------
@@ -117,10 +115,6 @@ const sanitizeColorId = (c) => String(c).replace(/[^a-zA-Z0-9]/g, "");
 const markerId = (kind, shape, color) =>
   `m-${kind}-${shape}-${sanitizeColorId(color)}`;
 
-// --- Relations (for dot matrix + matrix table)
-const REL_STATES = ["none", "ideal", "necessary"];
-const cycleRel = (t) => REL_STATES[(REL_STATES.indexOf(t) + 1) % REL_STATES.length];
-
 function MarkerDefs({ styles }) {
   const defs = [];
   ["necessary", "ideal"].forEach((k) => {
@@ -149,10 +143,21 @@ function MarkerDefs({ styles }) {
             />
           )}
           {shape === "circle" && (
-            <circle cx={kind === "end" ? 7 : 3} cy={3.5} r={3} fill={st.color} />
+            <circle
+              cx={kind === "end" ? 7 : 3}
+              cy={3.5}
+              r={3}
+              fill={st.color}
+            />
           )}
           {shape === "square" && (
-            <rect x={kind === "end" ? 3 : 1} y={1} width={6} height={6} fill={st.color} />
+            <rect
+              x={kind === "end" ? 3 : 1}
+              y={1}
+              width={6}
+              height={6}
+              fill={st.color}
+            />
           )}
           {shape === "diamond" && (
             <polygon
@@ -162,7 +167,13 @@ function MarkerDefs({ styles }) {
             />
           )}
           {shape === "bar" && (
-            <rect x={kind === "end" ? 7.5 : 1.5} y={0.5} width={1.5} height={6.5} fill={st.color} />
+            <rect
+              x={kind === "end" ? 7.5 : 1.5}
+              y={0.5}
+              width={1.5}
+              height={6.5}
+              fill={st.color}
+            />
           )}
         </marker>
       );
@@ -260,11 +271,6 @@ export default function BubbleAdjacencyApp() {
   // High-contrast accessibility
   const [highContrast, setHighContrast] = useState(false);
 
-  // Legend
-  const [showLegend, setShowLegend] = useState(true);
-  const [legendPos, setLegendPos] = useState({ x: -560, y: -320 });
-  const legendDragRef = useRef(null);
-
   // Conflict detector inputs
   const [expectedPairsText, setExpectedPairsText] = useState("");
   const [longFactor, setLongFactor] = useState(1.8);
@@ -349,8 +355,6 @@ export default function BubbleAdjacencyApp() {
     buffer,
     arrowOverlap,
     rotationSensitivity,
-    showLegend,
-    legendPos,
   });
   const pushHistory = () => {
     historyRef.current.push(snapshot());
@@ -366,8 +370,6 @@ export default function BubbleAdjacencyApp() {
     setBuffer(prev.buffer);
     setArrowOverlap(prev.arrowOverlap ?? 0);
     setRotationSensitivity(prev.rotationSensitivity ?? 0);
-    setShowLegend(prev.showLegend ?? true);
-    if (prev.legendPos) setLegendPos(prev.legendPos);
   }
   function redo() {
     if (!futureRef.current.length) return;
@@ -379,8 +381,6 @@ export default function BubbleAdjacencyApp() {
     setBuffer(next.buffer);
     setArrowOverlap(next.arrowOverlap ?? 0);
     setRotationSensitivity(next.rotationSensitivity ?? 0);
-    setShowLegend(next.showLegend ?? true);
-    if (next.legendPos) setLegendPos(next.legendPos);
   }
 
   // ---------------------------- Preset Persistence + Autosave ----------------
@@ -392,9 +392,6 @@ export default function BubbleAdjacencyApp() {
     if (typeof p.arrowOverlap === "number") setArrowOverlap(p.arrowOverlap);
     if (typeof p.rotationSensitivity === "number")
       setRotationSensitivity(p.rotationSensitivity);
-    if (typeof p.showLegend === "boolean") setShowLegend(p.showLegend);
-    if (p.legendPos && typeof p.legendPos.x === "number" && typeof p.legendPos.y === "number")
-      setLegendPos(p.legendPos);
     if (p.bulk) {
       const b = p.bulk;
       if (typeof b.bulkFill === "string") setBulkFill(b.bulkFill);
@@ -419,8 +416,6 @@ export default function BubbleAdjacencyApp() {
       buffer,
       arrowOverlap,
       rotationSensitivity,
-      showLegend,
-      legendPos,
       bulk: {
         bulkFill,
         bulkFillTransparent,
@@ -443,8 +438,6 @@ export default function BubbleAdjacencyApp() {
     buffer,
     arrowOverlap,
     rotationSensitivity,
-    showLegend,
-    legendPos,
     bulkFill,
     bulkFillTransparent,
     bulkStroke,
@@ -473,7 +466,7 @@ export default function BubbleAdjacencyApp() {
     }, 45000);
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodes, links, styles, buffer, rotationSensitivity, arrowOverlap, showLegend, legendPos]);
+  }, [nodes, links, styles, buffer, rotationSensitivity, arrowOverlap]);
 
   // Offer crash-recovery restore once on mount
   useEffect(() => {
@@ -892,13 +885,6 @@ export default function BubbleAdjacencyApp() {
       setLasso((prev) => ({ active: true, points: [...prev.points, p] }));
       return;
     }
-    if (legendDragRef.current) {
-      const svg = svgRef.current;
-      const p = svgToLocalPoint(svg, e.clientX, e.clientY);
-      const { offX, offY } = legendDragRef.current;
-      setLegendPos({ x: p.x - offX, y: p.y - offY });
-      return;
-    }
     const drag = groupDragRef.current;
     if (!drag) return;
     const svg = svgRef.current;
@@ -921,12 +907,9 @@ export default function BubbleAdjacencyApp() {
   }
 
   function onPointerUp() {
+    // lasso end?
     if (lasso.active) {
       finishLasso();
-      return;
-    }
-    if (legendDragRef.current) {
-      legendDragRef.current = null;
       return;
     }
     const drag = groupDragRef.current;
@@ -1315,8 +1298,6 @@ export default function BubbleAdjacencyApp() {
       arrowOverlap,
       rotationSensitivity,
       showMeasurements,
-      showLegend,
-      legendPos,
       exportBgMode,
       exportBgCustom,
       liveBgMode,
@@ -1447,9 +1428,6 @@ export default function BubbleAdjacencyApp() {
         setRotationSensitivity(d.rotationSensitivity);
       if (typeof d.showMeasurements === "boolean")
         setShowMeasurements(d.showMeasurements);
-      if (typeof d.showLegend === "boolean") setShowLegend(d.showLegend);
-      if (d.legendPos && typeof d.legendPos.x === "number" && typeof d.legendPos.y === "number")
-        setLegendPos(d.legendPos);
       if (d.exportBgMode) setExportBgMode(d.exportBgMode);
       if (d.exportBgCustom) setExportBgCustom(d.exportBgCustom);
       if (d.liveBgMode) setLiveBgMode(d.liveBgMode);
@@ -1503,9 +1481,6 @@ export default function BubbleAdjacencyApp() {
         if (d.liveBgMode) setLiveBgMode(d.liveBgMode);
         if (d.liveBgCustom) setLiveBgCustom(d.liveBgCustom);
         if (typeof d.highContrast === "boolean") setHighContrast(d.highContrast);
-        if (typeof d.showLegend === "boolean") setShowLegend(d.showLegend);
-        if (d.legendPos && typeof d.legendPos.x === "number" && typeof d.legendPos.y === "number")
-          setLegendPos(d.legendPos);
       } catch {
         alert("Invalid JSON file");
       }
@@ -1713,17 +1688,6 @@ export default function BubbleAdjacencyApp() {
     return liveBgCustom || THEME.surface;
   })();
 
-  // Legend drag start
-  function onLegendPointerDown(e) {
-    e.stopPropagation();
-    const svg = svgRef.current;
-    const p = svgToLocalPoint(svg, e.clientX, e.clientY);
-    legendDragRef.current = { offX: p.x - legendPos.x, offY: p.y - legendPos.y };
-    try {
-      e.currentTarget.setPointerCapture?.(e.pointerId);
-    } catch {}
-  }
-
   return (
     <div
       className={`w-full min-h-screen ${highContrast ? "hc" : ""}`}
@@ -1841,12 +1805,12 @@ export default function BubbleAdjacencyApp() {
                 <li><b>Select</b> a bubble to edit. <b>Ctrl/⌘-click</b> or <b>Shift-click</b> to multi-select.</li>
                 <li><b>Lasso</b>: hold <b>Shift</b> and drag on background to select an area.</li>
                 <li><b>Group-drag</b>: drag any selected bubble to move the whole selection.</li>
-                <li><b>Matrix</b> to add/remove adjacencies bidirectionally; or use the <b>Dot Matrix</b> and click dots.</li>
+                <li>Use <b>Matrix</b> to add/remove adjacencies bidirectionally.</li>
                 <li><b>Conflicts</b>: paste expected “necessary” pairs and set long-link tolerance.</li>
                 <li>Arrows render <b>above</b> bubbles so arrowheads remain visible when overlapping.</li>
               </ol>
               <div className="mt-3 text-xs text-[#9aa0a6]">
-                Shortcuts: <b>Ctrl/⌘+Z</b> undo • <b>Ctrl/⌘+Y</b> redo • <b>Ctrl/⌘+S</b> save JSON • <b>Delete</b> removes selection/link • <b>A</b> (Ctrl/⌘) select all • <b>Esc</b> clear • Arrows nudge • <b>?</b> cheatsheet.
+                Shortcuts: <b>Ctrl/⌘+Z</b> undo • <b>Ctrl/⌘+Y</b> redo • <b>Delete</b> removes selection/link • <b>A</b> (Ctrl/⌘) select all • <b>Esc</b> clear • Arrows nudge • <b>?</b> cheatsheet.
               </div>
             </div>
           </details>
@@ -2065,7 +2029,7 @@ export default function BubbleAdjacencyApp() {
 
               {/* Backgrounds */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div className="border border-[#2a2a2a] rounded-xl p-2">
+                <div className="border border-[#2a2a3a] rounded-xl p-2">
                   <div className="text-xs opacity-80 mb-2">Export background</div>
                   <div className="flex flex-wrap items-center gap-2 text-xs">
                     <label className="flex items-center gap-1">
@@ -2164,25 +2128,6 @@ export default function BubbleAdjacencyApp() {
                   onChange={(e) => setRotationSensitivity(Math.max(0, Math.min(100, +e.target.value || 0)))} />
                 <span className="opacity-70">%</span>
               </div>
-
-              {/* Legend toggle / position */}
-              <div className="flex items-center justify-between">
-                <label className="text-xs flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={showLegend}
-                    onChange={(e) => setShowLegend(e.target.checked)}
-                  />
-                  show legend (exportable)
-                </label>
-                <button
-                  className="btn btn-xs"
-                  onClick={() => setLegendPos({ x: -560, y: -320 })}
-                >
-                  Reset legend position
-                </button>
-              </div>
-
               <div className="flex items-center justify-between">
                 <label className="text-xs flex items-center gap-2">
                   <input type="checkbox" checked={showMeasurements} onChange={(e) => setShowMeasurements(e.target.checked)} />
@@ -2206,15 +2151,6 @@ export default function BubbleAdjacencyApp() {
               )}
             </div>
           </details>
-
-          {/* Adjacency Dot Matrix (triangular) */}
-          <TriangularMatrix
-            nodes={nodes}
-            getLinkTypeBetween={getLinkTypeBetween}
-            setLinkTypeBetween={setLinkTypeBetween}
-            styles={styles}
-            theme={THEME}
-          />
 
           {/* Adjacency Matrix (editable) */}
           <details className="card">
@@ -2693,48 +2629,10 @@ export default function BubbleAdjacencyApp() {
                     </g>
                   );
                 })}
-
-                {/* Legend (inside SVG; exportable) */}
-                {showLegend && (
-                  <g
-                    transform={`translate(${legendPos.x},${legendPos.y})`}
-                    onPointerDown={onLegendPointerDown}
-                    style={{ cursor: "move" }}
-                  >
-                    <rect x={0} y={0} width={260} height={84} rx={8} ry={8} fill="#0b0b12" opacity="0.85" stroke={THEME.border} />
-                    <text x={12} y={18} fill="#e6e6f0" fontSize={12} fontWeight={600} fontFamily={bulkTextFont}>Legend</text>
-
-                    {/* Necessary */}
-                    <line
-                      x1={14} y1={36} x2={150} y2={36}
-                      stroke={styles.necessary.color}
-                      strokeWidth={styles.necessary.width}
-                      strokeDasharray={dashFor("necessary")}
-                      markerStart={markerUrl("necessary", "start")}
-                      markerEnd={markerUrl("necessary", "end")}
-                    />
-                    <text x={160} y={39} fill="#e6e6f0" fontSize={12} fontFamily={bulkTextFont}>
-                      Necessary
-                    </text>
-
-                    {/* Ideal */}
-                    <line
-                      x1={14} y1={62} x2={150} y2={62}
-                      stroke={styles.ideal.color}
-                      strokeWidth={styles.ideal.width}
-                      strokeDasharray={dashFor("ideal")}
-                      markerStart={markerUrl("ideal", "start")}
-                      markerEnd={markerUrl("ideal", "end")}
-                    />
-                    <text x={160} y={65} fill="#e6e6f0" fontSize={12} fontFamily={bulkTextFont}>
-                      Ideal
-                    </text>
-                  </g>
-                )}
               </g>
             </svg>
 
-            {/* Floating canvas dock (top-right, not exported) */}
+            {/* Floating canvas dock (top-right) */}
             <div className="absolute right-3 top-3 flex flex-col gap-2" data-ignore-export>
               <div className="bg-black/35 backdrop-blur p-2 rounded-xl border border-[#2a2a3a] flex flex-col gap-2">
                 <button className="dock-btn btn" title="Zoom out" onClick={zoomOut} aria-label="Zoom out">−</button>
@@ -2746,9 +2644,6 @@ export default function BubbleAdjacencyApp() {
                 <button className="dock-btn btn" onClick={() => setPhysics((p) => !p)} title="Toggle physics" aria-label="Toggle physics">{physics ? "⏸" : "▶"}</button>
                 <button className="dock-btn btn" onClick={detanglePulse} title="De-tangle" aria-label="De-tangle">✺</button>
                 <button className="dock-btn btn" onClick={toggleFullscreen} title="Fullscreen" aria-label="Fullscreen">{isFullscreen ? "⤢" : "⤢"}</button>
-                <button className="dock-btn btn" onClick={() => setShowLegend((v) => !v)} title="Toggle legend" aria-label="Toggle legend">
-                  {showLegend ? "Lgnd✓" : "Lgnd"}
-                </button>
               </div>
               <div className="bg-black/35 backdrop-blur p-2 rounded-xl border border-[#2a2a3a] flex flex-col gap-2">
                 <button className="dock-btn btn" onClick={exportSVG} aria-label="Export SVG">SVG</button>
@@ -2868,168 +2763,6 @@ function InlineEditField({ label, value, onChange }) {
         className="bg-transparent border border-[#2a2a3a] rounded px-2 py-1 text-[12px] text-white"
       />
     </label>
-  );
-}
-
-/** Triangular Dot Matrix (upper-triangle) — synced with links
- *  Click a dot to cycle: none → ideal → necessary → none
- */
-function TriangularMatrix({
-  nodes,
-  getLinkTypeBetween,
-  setLinkTypeBetween,
-  styles,
-  theme = THEME,
-}) {
-  const [orderBy, setOrderBy] = useState("name"); // 'name' | 'area'
-
-  const ordered = useMemo(() => {
-    const arr = [...nodes];
-    if (orderBy === "area") arr.sort((a, b) => (b.area || 0) - (a.area || 0));
-    else arr.sort((a, b) => String(a.name).localeCompare(String(b.name)));
-    return arr;
-  }, [nodes, orderBy]);
-
-  const size = 22; // cell
-  const pad = 10;
-  const dotR = 6;
-  const gridStroke = theme.border;
-
-  const colorFor = (t) => {
-    if (t === "necessary") return styles.necessary.color;
-    if (t === "ideal") return styles.ideal.color;
-    return theme.subtle;
-  };
-
-  return (
-    <div className="card">
-      <div className="flex items-center justify-between">
-        <div className="group-title">Adjacency Dot Matrix (triangular)</div>
-        <div className="text-xs flex items-center gap-2">
-          <span className="opacity-70">Order by</span>
-          <button
-            className={`btn btn-xs ${orderBy === "name" ? "bg-white/10" : ""}`}
-            onClick={() => setOrderBy("name")}
-          >
-            name
-          </button>
-          <button
-            className={`btn btn-xs ${orderBy === "area" ? "bg-white/10" : ""}`}
-            onClick={() => setOrderBy("area")}
-          >
-            area
-          </button>
-        </div>
-      </div>
-
-      <div className="mt-3 overflow-auto" style={{ maxHeight: 360 }}>
-        <svg
-          width={pad + ordered.length * size + 260}
-          height={pad + ordered.length * size + 30}
-        >
-          {/* top labels */}
-          {ordered.map((n, j) => (
-            <text
-              key={"t" + n.id}
-              x={pad + j * size + size / 2}
-              y={10}
-              transform={`rotate(-45 ${pad + j * size + size / 2} 10)`}
-              textAnchor="start"
-              fontSize="10"
-              fill="#cfd3dc"
-              style={{ userSelect: "none" }}
-              title={n.name}
-            >
-              {n.name}
-            </text>
-          ))}
-
-          {/* rows */}
-          {ordered.map((ri, r) => (
-            <g key={"r" + ri.id} transform={`translate(0, ${pad + r * size})`}>
-              {/* left labels */}
-              <text
-                x={0}
-                y={size * 0.8}
-                fontSize="11"
-                fill="#cfd3dc"
-                style={{ userSelect: "none" }}
-              >
-                {ri.name}
-              </text>
-
-              {/* cells (upper triangle incl. diagonal) */}
-              {ordered.map((ci, c) => {
-                if (c < r) return null;
-                const cx = pad + c * size + size / 2 + 1;
-                const cy = size / 2;
-                const isDiag = ri.id === ci.id;
-                const rel = isDiag ? "none" : getLinkTypeBetween(ri.id, ci.id);
-
-                return (
-                  <g
-                    key={ri.id + "|" + ci.id}
-                    transform={`translate(${cx},${cy})`}
-                    style={{ cursor: isDiag ? "default" : "pointer" }}
-                    onClick={() => {
-                      if (isDiag) return;
-                      const next = cycleRel(rel);
-                      setLinkTypeBetween(ri.id, ci.id, next);
-                    }}
-                    title={`${ri.name} × ${ci.name}: ${rel}`}
-                  >
-                    {/* diamond cell frame */}
-                    <rect
-                      x={-size / 2}
-                      y={-size / 2}
-                      width={size}
-                      height={size}
-                      fill="none"
-                      stroke={gridStroke}
-                      transform="rotate(45)"
-                    />
-                    {/* dot */}
-                    {!isDiag ? (
-                      <circle
-                        r={dotR}
-                        fill={colorFor(rel)}
-                        opacity={rel === "none" ? 0.55 : 0.95}
-                      />
-                    ) : (
-                      <circle r={2.5} fill={gridStroke} opacity={0.8} />
-                    )}
-                  </g>
-                );
-              })}
-            </g>
-          ))}
-
-          {/* legend (right side) */}
-          <g transform={`translate(${pad + ordered.length * size + 24}, ${26})`}>
-            {[["necessary", "adjacent"], ["ideal", "nearby"], ["none", "not related"]].map(
-              ([k, label], i) => (
-                <g key={k} transform={`translate(0, ${i * 18})`}>
-                  <circle
-                    r="6"
-                    cx="0"
-                    cy="0"
-                    fill={colorFor(k)}
-                    opacity={k === "none" ? 0.55 : 0.95}
-                  />
-                  <text x="12" y="4" fontSize="11" fill="#cfd3dc">
-                    {label}
-                  </text>
-                </g>
-              )
-            )}
-          </g>
-        </svg>
-      </div>
-
-      <p className="mt-2 text-xs opacity-70">
-        Click a dot to cycle: <b>none</b> → <b>ideal</b> → <b>necessary</b> → <b>none</b>. Changes are reflected in the bubble diagram instantly.
-      </p>
-    </div>
   );
 }
 
