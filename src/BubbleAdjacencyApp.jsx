@@ -2875,21 +2875,6 @@ export default function BubbleAdjacencyApp() {
                           {n.area} m²
                         </text>
                       )}
-
-                      {/* AREA LABEL — fixed text scale, not part of dynamic text */}
-                      {showMeasurements && (
-                        <text
-                          y={r - 18}
-                          textAnchor="middle"
-                          style={{
-                            fill: THEME.subtle,
-                            fontSize: areaSize,
-                            fontFamily: labelFont,
-                          }}
-                        >
-                          {n.area} m²
-                        </text>
-                      )}
                     </g>
 
                 {/* LINKS (above bubbles) */}
