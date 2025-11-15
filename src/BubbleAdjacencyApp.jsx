@@ -237,6 +237,7 @@ export default function BubbleAdjacencyApp() {
 
   // Modes
   const [mode, setMode] = useState("select");
+  const [canvasLocked, setCanvasLocked] = useState(false); // NEW
   const [currentLineType, setCurrentLineType] = useState("necessary");
   const [linkSource, setLinkSource] = useState(null);
 
@@ -909,6 +910,7 @@ export default function BubbleAdjacencyApp() {
   function onPointerDownNode(e, node) {
     e.stopPropagation();
 
+    if (canvasLocked) return;      // NEW: no dragging when locked
     if (mode === "connect") return;
 
     if (e.ctrlKey || e.metaKey || e.shiftKey) toggleSelect(node.id);
@@ -1056,6 +1058,7 @@ export default function BubbleAdjacencyApp() {
 
   // Lasso
   function onPointerDownSvg(e) {
+    if (canvasLocked) return;      // NEW: no lasso / selection start when locked
     if (mode !== "select") return;
     if (e.shiftKey) {
       e.preventDefault();
@@ -1702,19 +1705,21 @@ export default function BubbleAdjacencyApp() {
 
   // Zoom / Pan / Fit
   useEffect(() => {
-    const svg = d3.select(svgRef.current);
-    const zoom = d3
-      .zoom()
-      .scaleExtent([0.2, 5])
-      .on("zoom", (event) => {
-        setZoomTransform(event.transform);
-      });
-    zoomBehaviorRef.current = zoom;
-    svg.call(zoom);
-    svg.on("dblclick.zoom", null);
-    svg.on("dblclick", () => resetZoom());
-    return () => svg.on(".zoom", null);
-  }, []);
+    const svgEl = svgRef.current;
+    const zoom = zoomBehaviorRef.current;
+    if (!svgEl || !zoom) return;
+    const svg = d3.select(svgEl);
+
+    if (canvasLocked) {
+      // Remove all zoom gesture handlers (wheel / drag)
+      svg.on(".zoom", null);
+    } else {
+      // Re-attach zoom handlers
+      svg.call(zoom);
+      svg.on("dblclick.zoom", null);
+      svg.on("dblclick", () => resetZoom());
+    }
+  }, [canvasLocked]);
   function resetZoom() {
     const svg = d3.select(svgRef.current);
     const zoom = zoomBehaviorRef.current;
@@ -1869,6 +1874,8 @@ export default function BubbleAdjacencyApp() {
   };
   const selectedNode = nodes.find((n) => n.id === selectedNodeId) || null;
 
+  const isWhiteMode = liveBgMode === "white" && exportBgMode === "white"; // NEW
+
   const liveBg =
     liveBgMode === "transparent"
       ? "transparent"
@@ -1885,7 +1892,10 @@ export default function BubbleAdjacencyApp() {
   return (
     <div
       className={`w-full min-h-screen ${highContrast ? "hc" : ""}`}
-      style={{ background: THEME.bg, color: THEME.text }}
+      style={{
+        background: isWhiteMode ? "#f9fafb" : THEME.bg,  // NEW
+        color: THEME.text,
+      }}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
     >
@@ -1959,6 +1969,25 @@ export default function BubbleAdjacencyApp() {
               title="High-contrast mode"
             >
               HC
+            </button>
+            <button
+              className={`btn btn-xs ${isWhiteMode ? "bg-white/10" : ""}`}
+              onClick={() => {
+                if (isWhiteMode) {
+                  // Turn white mode OFF → go back to previous style
+                  setLiveBgMode("custom");
+                  setLiveBgCustom(THEME.surface);
+                  setExportBgMode("transparent");
+                } else {
+                  // Turn white mode ON → white canvas & white export background
+                  setLiveBgMode("white");
+                  setExportBgMode("white");
+                }
+              }}
+              aria-pressed={isWhiteMode}
+              title="Toggle white mode (canvas & export)"
+            >
+              White
             </button>
             <button className="btn btn-xs" onClick={() => setShowHelp(true)} title="Cheatsheet (?)">?</button>
           </div>
@@ -2875,36 +2904,6 @@ export default function BubbleAdjacencyApp() {
                           {n.area} m²
                         </text>
                       )}
-
-                      {/* inline editors (disabled in connect mode) */}
-                      <foreignObject
-                        x={-r}
-                        y={-18}
-                        width={r * 2}
-                        height={36}
-                        data-ignore-export
-                        style={{ pointerEvents: mode === "connect" ? "none" : "auto" }}
-                      >
-                        <InlineEdit
-                          text={n.name}
-                          onChange={(val) => renameNode(n.id, val)}
-                          className="mx-auto text-center"
-                        />
-                      </foreignObject>
-                      <foreignObject
-                        x={-40}
-                        y={r - 22}
-                        width={80}
-                        height={26}
-                        data-ignore-export
-                        style={{ pointerEvents: mode === "connect" ? "none" : "auto" }}
-                      >
-                        <InlineEdit
-                          text={`${n.area}`}
-                          onChange={(val) => changeArea(n.id, val)}
-                          className="text-center"
-                        />
-                      </foreignObject>
                     </g>
                   );
                 })}
@@ -2974,17 +2973,27 @@ export default function BubbleAdjacencyApp() {
             </svg>
 
             {/* Floating dock (zoom/physics/export/json) */}
-            <div className="absolute right-3 top-3 flex flex-col gap-2" data-ignore-export>
               <div className="bg-black/35 backdrop-blur p-2 rounded-xl border border-[#2a2a3a] flex flex-col gap-2">
-                <button className="dock-btn btn" title="Zoom out" onClick={zoomOut} aria-label="Zoom out">−</button>
-                <button className="dock-btn btn" title="Reset view" onClick={resetZoom} aria-label="Reset view">⟲</button>
-                <button className="dock-btn btn" title="Fit to view" onClick={fitToView} aria-label="Fit to view">⤢</button>
-                <button className="dock-btn btn" title="Zoom in" onClick={zoomIn} aria-label="Zoom in">＋</button>
-              </div>
-              <div className="bg-black/35 backdrop-blur p-2 rounded-xl border border-[#2a2a3a] flex flex-col gap-2">
-                <button className="dock-btn btn" onClick={() => setPhysics((p) => !p)} title="Toggle physics" aria-label="Toggle physics">{physics ? "⏸" : "▶"}</button>
+                <button
+                  className="dock-btn btn"
+                  onClick={() => setCanvasLocked((v) => !v)}
+                  title={canvasLocked ? "Unlock canvas" : "Lock canvas (disable pan/drag)"}
+                  aria-pressed={canvasLocked}
+                >
+                  {canvasLocked ? "🔒" : "🔓"}
+                </button>
+                <button
+                  className="dock-btn btn"
+                  onClick={() => setPhysics((p) => !p)}
+                  title="Toggle physics"
+                  aria-label="Toggle physics"
+                >
+                  {physics ? "⏸" : "▶"}
+                </button>
                 <button className="dock-btn btn" onClick={detanglePulse} title="De-tangle" aria-label="De-tangle">✺</button>
-                <button className="dock-btn btn" onClick={toggleFullscreen} title="Fullscreen" aria-label="Fullscreen">{isFullscreen ? "⤢" : "⤢"}</button>
+                <button className="dock-btn btn" onClick={toggleFullscreen} title="Fullscreen" aria-label="Fullscreen">
+                  {isFullscreen ? "⤢" : "⤢"}
+                </button>
               </div>
               <div className="bg-black/35 backdrop-blur p-2 rounded-xl border border-[#2a2a3a] flex flex-col gap-2">
                 <button className="dock-btn btn" onClick={exportSVG} aria-label="Export SVG">SVG</button>
@@ -3031,6 +3040,7 @@ export default function BubbleAdjacencyApp() {
               {mode === "connect" && linkSource && <span> • select a target…</span>}
               {selectedNode && <span> • Editing: <span className="text-white">{selectedNode.name}</span></span>}
               <span> • Line: <span className="text-white capitalize">{currentLineType}</span></span>
+              <span> • Canvas: <span className="text-white">{canvasLocked ? "LOCKED" : "UNLOCKED"}</span></span>
               <span> • AutoText: <span className="text-white">{autoLabelSize ? "ON" : "OFF"}</span></span>
               <span> • DynScale: <span className="text-white">{Math.round(dynamicTextScale * 100)}%</span></span>
             </div>
