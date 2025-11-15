@@ -2197,7 +2197,7 @@ function dynamicLabelSizeForNode(n) {
               className="text-[11px] opacity-70"
               style={{ color: theme.subtle }}
             >
-              v1.1
+              v1.1 beta
             </span>
           </div>
           <div
