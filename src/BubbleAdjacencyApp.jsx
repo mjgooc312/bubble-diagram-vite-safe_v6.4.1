@@ -4,17 +4,26 @@ import * as d3 from "d3";
 
 /**
  * Bubble Diagram Builder – Force-directed (React + D3)
- * v4.9.0 — Gradient fills • Floating JSON dock • Auto-connect in conflicts
+ * v4.9.5 — Gradient fills • Floating JSON dock • Auto-connect in conflicts
  *           Key toggles for link type → connect mode • No-overlap even w/ physics OFF
  *           Dynamic label sizing (global + per-node override) • Delete-in-input fix
+ *           Added light mode feature and Quick Tour Function
  */
 
-const THEME = {
+const THEME_DARK = {
   bg: "#0b0b12",
   surface: "#121220",
   text: "#e6e6f0",
   subtle: "#9aa0a6",
   border: "#2a2a3a",
+};
+
+const THEME_LIGHT = {
+  bg: "#f5f5f7",
+  surface: "#ffffff",
+  text: "#111827",
+  subtle: "#6b7280",
+  border: "#d1d5db",
 };
 
 // Circle radius bounds
@@ -167,8 +176,40 @@ function MarkerDefs({ styles }) {
 }
 
 // ------------------------- Persistence ---------------------------------------
+// ------------------------- Persistence ---------------------------------------
 const LS_KEY = "bubbleBuilder:v1";
 const AUTOSAVE_KEY = "bubbleBuilder:autosave";
+
+// NEW: onboarding tour storage key + steps
+const TOUR_KEY = "bubbleBuilder:tourSeen";
+const TOUR_STEPS = [
+  {
+    title: "Welcome to Bubble Diagram Builder v1.O",
+    body:
+      "Paste spaces on the left, then click Generate to create bubbles sized by area. Use Select/Drag and Connect modes to arrange and link spaces.",
+  },
+  {
+    title: "Modes & selection",
+    body:
+      "Use Select/Drag to move, multi-select, and lasso spaces (Shift + drag). Switch to Connect to create necessary or ideal adjacencies between bubbles.",
+  },
+  {
+    title: "Styles & labels",
+    body:
+      "The Styles panel controls bubble colors, gradients, and label fonts. Auto label size keeps text readable as you tweak areas.",
+  },
+  {
+    title: "Adjacency & conflicts",
+    body:
+      "Use the Adjacency Matrix to edit links in table form. The Conflict Detector highlights missing necessary pairs and long links that are far from ideal length.",
+  },
+  {
+    title: "Export & tools",
+    body:
+      "Files & Export lets you save SVG/PNG/JSON. Use zoom controls, physics toggle, De-tangle, and scenes to prepare layout options for review.",
+  },
+];
+
 function loadPresets() {
   try {
     return JSON.parse(localStorage.getItem(LS_KEY) || "{}");
@@ -176,6 +217,7 @@ function loadPresets() {
     return {};
   }
 }
+
 function savePresets(obj) {
   try {
     localStorage.setItem(LS_KEY, JSON.stringify(obj));
@@ -256,6 +298,8 @@ export default function BubbleAdjacencyApp() {
 
   // A11y
   const [highContrast, setHighContrast] = useState(false);
+  const [themeMode, setThemeMode] = useState("dark"); // "dark" | "light"
+  const theme = themeMode === "light" ? THEME_LIGHT : THEME_DARK;
 
   // Conflicts
   const [expectedPairsText, setExpectedPairsText] = useState("");
@@ -305,7 +349,7 @@ export default function BubbleAdjacencyApp() {
 
   // Live preview background
   const [liveBgMode, setLiveBgMode] = useState("custom"); // transparent | white | custom
-  const [liveBgCustom, setLiveBgCustom] = useState(THEME.surface);
+  const [liveBgCustom, setLiveBgCustom] = useState(THEME_DARK.surface);
 
   // Bulk bubble/label defaults
   const [bulkFill, setBulkFill] = useState("#161625");
@@ -378,38 +422,46 @@ export default function BubbleAdjacencyApp() {
     setAutoLabelSize(next.autoLabelSize ?? true);
   }
 
-  // Presets / autosave
-  useEffect(() => {
-    const p = loadPresets();
-    if (!p) return;
-    if (p.styles) setStyles((s) => ({ ...s, ...p.styles }));
-    if (typeof p.buffer === "number") setBuffer(p.buffer);
-    if (typeof p.arrowOverlap === "number") setArrowOverlap(p.arrowOverlap);
-    if (typeof p.rotationSensitivity === "number")
-      setRotationSensitivity(p.rotationSensitivity);
-    if (typeof p.autoLabelSize === "boolean") setAutoLabelSize(p.autoLabelSize);
-    if (p.bulk) {
-      const b = p.bulk;
-      if (typeof b.bulkFill === "string") setBulkFill(b.bulkFill);
-      if (typeof b.bulkFillTransparent === "boolean")
-        setBulkFillTransparent(b.bulkFillTransparent);
-      if (typeof b.bulkStroke === "string") setBulkStroke(b.bulkStroke);
-      if (typeof b.bulkStrokeWidth === "number")
-        setBulkStrokeWidth(Math.max(1, Math.min(12, b.bulkStrokeWidth)));
-      if (typeof b.bulkTextFont === "string") setBulkTextFont(b.bulkTextFont);
-      if (typeof b.bulkTextColor === "string") setBulkTextColor(b.bulkTextColor);
-      if (b.bulkTextSize != null) setBulkTextSize(clampTextSize(b.bulkTextSize));
-      if (typeof b.bulkGradientEnabled === "boolean")
-        setBulkGradientEnabled(b.bulkGradientEnabled);
-      if (typeof b.bulkGradC1 === "string") setBulkGradC1(b.bulkGradC1);
-      if (typeof b.bulkGradC2 === "string") setBulkGradC2(b.bulkGradC2);
-      if (typeof b.bulkGradAngle === "number") setBulkGradAngle(b.bulkGradAngle);
-    }
-    if (p.exportBgMode) setExportBgMode(p.exportBgMode);
-    if (p.exportBgCustom) setExportBgCustom(p.exportBgCustom);
-    if (p.liveBgMode) setLiveBgMode(p.liveBgMode);
-    if (p.liveBgCustom) setLiveBgCustom(p.liveBgCustom);
-  }, []);
+// Presets / autosave
+useEffect(() => {
+  const p = loadPresets();
+  if (!p) return;
+
+  if (p.styles) setStyles((s) => ({ ...s, ...p.styles }));
+  if (typeof p.buffer === "number") setBuffer(p.buffer);
+  if (typeof p.arrowOverlap === "number") setArrowOverlap(p.arrowOverlap);
+  if (typeof p.rotationSensitivity === "number")
+    setRotationSensitivity(p.rotationSensitivity);
+  if (typeof p.autoLabelSize === "boolean") setAutoLabelSize(p.autoLabelSize);
+
+  if (p.bulk) {
+    const b = p.bulk;
+    if (typeof b.bulkFill === "string") setBulkFill(b.bulkFill);
+    if (typeof b.bulkFillTransparent === "boolean")
+      setBulkFillTransparent(b.bulkFillTransparent);
+    if (typeof b.bulkStroke === "string") setBulkStroke(b.bulkStroke);
+    if (typeof b.bulkStrokeWidth === "number")
+      setBulkStrokeWidth(Math.max(1, Math.min(12, b.bulkStrokeWidth)));
+    if (typeof b.bulkTextFont === "string") setBulkTextFont(b.bulkTextFont);
+    if (typeof b.bulkTextColor === "string") setBulkTextColor(b.bulkTextColor);
+    if (b.bulkTextSize != null) setBulkTextSize(clampTextSize(b.bulkTextSize));
+    if (typeof b.bulkGradientEnabled === "boolean")
+      setBulkGradientEnabled(b.bulkGradientEnabled);
+    if (typeof b.bulkGradC1 === "string") setBulkGradC1(b.bulkGradC1);
+    if (typeof b.bulkGradC2 === "string") setBulkGradC2(b.bulkGradC2);
+    if (typeof b.bulkGradAngle === "number") setBulkGradAngle(b.bulkGradAngle);
+  }
+
+  if (p.exportBgMode) setExportBgMode(p.exportBgMode);
+  if (p.exportBgCustom) setExportBgCustom(p.exportBgCustom);
+  if (p.liveBgMode) setLiveBgMode(p.liveBgMode);
+  if (p.liveBgCustom) setLiveBgCustom(p.liveBgCustom);
+
+  // 🔥 THIS IS THE NEW PART: restore light/dark choice
+  if (p.themeMode === "light" || p.themeMode === "dark") {
+    setThemeMode(p.themeMode);
+  }
+}, []);
 
   useEffect(() => {
     const payload = {
@@ -437,6 +489,7 @@ export default function BubbleAdjacencyApp() {
       liveBgCustom,
       scenes,
       activeSceneId,
+      themeMode,    
     };
     savePresets(payload);
   }, [
@@ -462,6 +515,7 @@ export default function BubbleAdjacencyApp() {
     liveBgCustom,
     scenes,
     activeSceneId,
+    themeMode,    
   ]);
 
   // Autosave
@@ -1203,6 +1257,34 @@ export default function BubbleAdjacencyApp() {
   const lastClickedLinkRef = useRef(null);
   const [showHelp, setShowHelp] = useState(false);
 
+  // NEW: Onboarding tour state
+  const [showTour, setShowTour] = useState(false);
+  const [tourStep, setTourStep] = useState(0);
+
+  const startTour = () => {
+    setTourStep(0);
+    setShowTour(true);
+  };
+
+  const closeTour = () => {
+    setShowTour(false);
+    try {
+      localStorage.setItem(TOUR_KEY, "1");
+    } catch {}
+  };
+
+  // Auto-open tour on first visit
+  useEffect(() => {
+    try {
+      const seen = localStorage.getItem(TOUR_KEY);
+      if (!seen) {
+        setTourStep(0);
+        setShowTour(true);
+      }
+    } catch {}
+  }, []);
+
+  // All keyboard shortcuts live here
   useEffect(() => {
     const onKey = (e) => {
       const active = document.activeElement;
@@ -1265,7 +1347,9 @@ export default function BubbleAdjacencyApp() {
       }
       if (k === "Tab") {
         e.preventDefault();
-        setCurrentLineType((t) => (t === "necessary" ? "ideal" : "necessary"));
+        setCurrentLineType((t) =>
+          t === "necessary" ? "ideal" : "necessary"
+        );
         setMode("connect");
         return;
       }
@@ -1323,6 +1407,7 @@ export default function BubbleAdjacencyApp() {
         if (!physics) resolveCollisionsOnce();
       }
     };
+
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1840,7 +1925,7 @@ export default function BubbleAdjacencyApp() {
       ? "transparent"
       : liveBgMode === "white"
       ? "#ffffff"
-      : liveBgCustom || THEME.surface;
+      : liveBgCustom || theme.surface;
 
   // When BUFFER changes while physics is OFF, resolve overlaps once
   useEffect(() => {
@@ -1851,20 +1936,33 @@ export default function BubbleAdjacencyApp() {
   return (
     <div
       className={`w-full min-h-screen ${highContrast ? "hc" : ""}`}
-      style={{ background: THEME.bg, color: THEME.text }}
+      style={{ background: theme.bg, color: theme.text }}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
     >
-      <style data-ignore-export>{`
-        :root { color-scheme: dark; }
-        * { scrollbar-width: thin; scrollbar-color: #3a3a4a #121220; }
+            <style data-ignore-export>{`
+        :root { color-scheme: ${themeMode === "light" ? "light" : "dark"}; }
+
+        * {
+          scrollbar-width: thin;
+          scrollbar-color: ${
+            themeMode === "light"
+              ? "#cbd5f5 #f3f4f6"
+              : "#3a3a4a #121220"
+          };
+        }
         *::-webkit-scrollbar { height: 10px; width: 10px; }
-        *::-webkit-scrollbar-thumb { background: #3a3a4a; border-radius: 8px; }
-        *::-webkit-scrollbar-track { background: #121220; }
+        *::-webkit-scrollbar-thumb {
+          background: ${themeMode === "light" ? "#cbd5f5" : "#3a3a4a"};
+          border-radius: 8px;
+        }
+        *::-webkit-scrollbar-track {
+          background: ${themeMode === "light" ? "#f3f4f6" : "#121220"};
+        }
 
         input[type="color"]{
           -webkit-appearance:none; appearance:none;
-          border:1px solid ${THEME.border}; width:32px; height:28px; border-radius:9999px;
+          border:1px solid ${theme.border}; width:32px; height:28px; border-radius:9999px;
           padding:0; background:transparent; cursor:pointer;
         }
         input[type="color"]::-webkit-color-swatch-wrapper{ padding:0; border-radius:9999px; }
@@ -1872,23 +1970,52 @@ export default function BubbleAdjacencyApp() {
         input[type="color"]::-moz-color-swatch{ border:none; border-radius:9999px; }
 
         .ui-select{
-          background:#0f0f18; color:#e6e6f0; border:1px solid ${THEME.border};
+          background:${theme.surface};
+          color:${theme.text};
+          border:1px solid ${theme.border};
           border-radius:10px; padding:6px 8px; font-size:13px; line-height:1.2;
-          box-shadow:0 6px 18px rgba(0,0,0,.35);
+          box-shadow:0 6px 18px rgba(0,0,0,.08);
         }
-        .ui-select:focus{ outline:3px solid ${highContrast ? "#00D1FF" : "#8b5cf6"}; outline-offset:2px; }
-        .ui-select option{ background:#0f0f18; color:#e6e6f0; }
+        .ui-select:focus{
+          outline:3px solid ${highContrast ? "#00D1FF" : "#8b5cf6"};
+          outline-offset:2px;
+        }
+        .ui-select option{ background:${theme.surface}; color:${theme.text}; }
 
-        .card{ background:#121220; border:1px solid ${THEME.border}; border-radius:16px; padding:14px; }
-        .group-title{ font-size:12px; letter-spacing:.06em; color:${THEME.subtle}; font-weight:600; }
-        .btn{ border:1px solid ${THEME.border}; border-radius:12px; padding:8px 12px; font-size:13px; background:transparent; color:${THEME.text}; }
-        .btn:hover{ background:rgba(255,255,255,.06); }
-        .btn:focus{ outline:3px solid ${highContrast ? "#00D1FF" : "#8b5cf6"}; outline-offset:2px; }
+        .card{
+          background:${theme.surface};
+          border:1px solid ${theme.border};
+          border-radius:16px;
+          padding:14px;
+        }
+        .group-title{
+          font-size:12px;
+          letter-spacing:.06em;
+          color:${theme.subtle};
+          font-weight:600;
+        }
+        .btn{
+          border:1px solid ${theme.border};
+          border-radius:12px;
+          padding:8px 12px;
+          font-size:13px;
+          background:transparent;
+          color:${theme.text};
+        }
+        .btn:hover{
+          background:${
+            themeMode === "light" ? "rgba(15,23,42,.04)" : "rgba(255,255,255,.06)"
+          };
+        }
+        .btn:focus{
+          outline:3px solid ${highContrast ? "#00D1FF" : "#8b5cf6"};
+          outline-offset:2px;
+        }
         .btn-xs{ padding:6px 10px; font-size:12px; border-radius:10px; }
         .dock-btn{ width:38px; height:38px; display:flex; align-items:center; justify-content:center; border-radius:10px; }
 
         .hc .card{ border-color:#8b5cf6; }
-        .hc .btn:hover{ background:rgba(255,255,255,.12); }
+        .hc .btn:hover{ background:rgba(56,189,248,.14); }
       `}</style>
 
       {/* Command bar */}
@@ -1918,6 +2045,32 @@ export default function BubbleAdjacencyApp() {
             <button className="btn btn-xs" onClick={undo} aria-label="Undo">Undo</button>
             <button className="btn btn-xs" onClick={redo} aria-label="Redo">Redo</button>
             <button className="btn btn-xs" onClick={clearAll} aria-label="Clear all">Clear</button>
+
+{/* Light/Dark toggle */}
+<button
+  className="btn btn-xs"
+  onClick={() => {
+    setThemeMode((m) => {
+      const next = m === "dark" ? "light" : "dark";
+
+      // when we switch into LIGHT → set live background to transparent
+      if (next === "light") {
+        setLiveBgMode("transparent");
+      }
+
+      return next;
+    });
+  }}
+  title={
+    themeMode === "light"
+      ? "Switch to dark mode"
+      : "Switch to light mode"
+  }
+  aria-pressed={themeMode === "light"}
+>
+  {themeMode === "light" ? "☀" : "☾"}
+</button>
+
             <button
               className={`btn btn-xs ${highContrast ? "bg-white/10" : ""}`}
               onClick={() => setHighContrast((v) => !v)}
@@ -1926,7 +2079,22 @@ export default function BubbleAdjacencyApp() {
             >
               HC
             </button>
-            <button className="btn btn-xs" onClick={() => setShowHelp(true)} title="Cheatsheet (?)">?</button>
+
+            <button
+              className="btn btn-xs"
+              onClick={startTour}
+              title="Quick guided tour"
+            >
+              Guide
+            </button>
+
+            <button
+              className="btn btn-xs"
+              onClick={() => setShowHelp(true)}
+              title="Cheatsheet (?)"
+            >
+              ?
+            </button>
           </div>
         </div>
       </div>
@@ -2730,54 +2898,55 @@ export default function BubbleAdjacencyApp() {
 
                       {n.locked && <circle r={3} cx={r - 10} cy={-r + 10} fill="#22d3ee" />}
 
-                      {/* label */}
-                      <text
-                        textAnchor="middle"
-                        dominantBaseline="middle"
-                        className="select-none"
-                        style={{
-                          fill: labelColor,
-                          fontSize: labelSize,
-                          fontWeight: 600,
-                          letterSpacing: 0.4,
-                          fontFamily: labelFont,
-                        }}
-                      >
-                        {(() => {
-                          const pad = 10;
-                          const maxW = Math.max(20, (r - pad) * 2);
-                          const lines = wrapToWidth(
-                            n.name,
-                            labelFont,
-                            labelSize,
-                            maxW,
-                            5
-                          );
-                          const gap = Math.max(2, Math.round(labelSize * 0.2));
-                          const total =
-                            lines.length * labelSize + (lines.length - 1) * gap;
-                          const startY = -total / 2 + labelSize * 0.8;
-                          return lines.map((line, i) => (
-                            <tspan key={i} x={0} y={startY + i * (labelSize + gap)}>
-                              {line}
-                            </tspan>
-                          ));
-                        })()}
-                      </text>
+                      {/* name label */}
+<text
+  textAnchor="middle"
+  dominantBaseline="middle"
+  className="select-none"
+  style={{
+    fill: labelColor,
+    fontSize: labelSize,
+    fontWeight: 600,
+    letterSpacing: 0.4,
+    fontFamily: labelFont,
+  }}
+>
+  {(() => {
+    const pad = 10;
+    const maxW = Math.max(20, (r - pad) * 2);
+    const lines = wrapToWidth(
+      n.name,
+      labelFont,
+      labelSize,
+      maxW,
+      5
+    );
+    const gap = Math.max(2, Math.round(labelSize * 0.2));
+    const total =
+      lines.length * labelSize + (lines.length - 1) * gap;
+    const startY = -total / 2 + labelSize * 0.8;
+    return lines.map((line, i) => (
+      <tspan key={i} x={0} y={startY + i * (labelSize + gap)}>
+        {line}
+      </tspan>
+    ));
+  })()}
+</text>
 
-                      {showMeasurements && (
-                        <text
-                          y={r - 18}
-                          textAnchor="middle"
-                          style={{
-                            fill: THEME.subtle,
-                            fontSize: areaSize,
-                            fontFamily: labelFont,
-                          }}
-                        >
-                          {n.area} m²
-                        </text>
-                      )}
+{/* area label (optional, uses "show m² labels" toggle) */}
+{showMeasurements && (
+  <text
+    y={r - Math.max(10, areaSize + 2)}
+    textAnchor="middle"
+    style={{
+      fill: theme.subtle,
+      fontSize: areaSize,
+      fontFamily: labelFont,
+    }}
+  >
+    {`${n.area} m²`}
+  </text>
+)}
 
                       {/* inline editors (disabled in connect mode) */}
                       <foreignObject
@@ -2932,7 +3101,7 @@ export default function BubbleAdjacencyApp() {
           {/* About */}
           <div className="mt-3 card">
             <div className="text-sm">
-              <p><strong>Authored by:</strong> Mark Jay O. Gooc — Architecture student, Batangas State University – TNEU.</p>
+              <p><strong>Authored by:</strong> Mark Jay O. Gooc — Architecture Student (Batangas State University – TNEU).</p>
               <p className="opacity-70 text-xs mt-1">All Rights Reserve 2025.</p>
             </div>
           </div>
@@ -2967,6 +3136,80 @@ export default function BubbleAdjacencyApp() {
                 <div><b>Arrows</b>: Nudge selected (Shift for x4)</div>
                 <div><b>Shift+Drag</b>: Lasso select</div>
                 <div><b>1</b> or <b>N</b>: Necessary • <b>2</b> or <b>I</b>: Ideal • <b>Tab</b>: Toggle → Connect</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+            {/* Onboarding Quick Tour Modal */}
+      {showTour && (
+        <div
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50"
+          role="dialog"
+          aria-modal="true"
+          onClick={closeTour}
+          data-ignore-export
+        >
+          <div
+            className="card max-w-lg w-full"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-lg font-semibold">
+                Quick Tour ({tourStep + 1}/{TOUR_STEPS.length})
+              </div>
+              <button
+                className="btn btn-xs"
+                onClick={closeTour}
+                aria-label="Close tour"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="mt-1 mb-3">
+              <div className="text-sm font-semibold mb-1">
+                {TOUR_STEPS[tourStep].title}
+              </div>
+              <p className="text-sm text-[#c0c4d0]">
+                {TOUR_STEPS[tourStep].body}
+              </p>
+            </div>
+
+            <div className="flex items-center justify-between text-xs mt-2">
+              <button
+                className="btn btn-xs"
+                onClick={closeTour}
+              >
+                Skip for now
+              </button>
+              <div className="flex gap-2 items-center">
+                <button
+                  className="btn btn-xs"
+                  onClick={() => setTourStep((s) => (s > 0 ? s - 1 : s))}
+                  disabled={tourStep === 0}
+                >
+                  Back
+                </button>
+                {tourStep < TOUR_STEPS.length - 1 ? (
+                  <button
+                    className="btn btn-xs"
+                    onClick={() =>
+                      setTourStep((s) =>
+                        s < TOUR_STEPS.length - 1 ? s + 1 : s
+                      )
+                    }
+                  >
+                    Next
+                  </button>
+                ) : (
+                  <button
+                    className="btn btn-xs"
+                    onClick={closeTour}
+                  >
+                    Done
+                  </button>
+                )}
               </div>
             </div>
           </div>
